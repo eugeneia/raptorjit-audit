@@ -1,11 +1,12 @@
 local msgpack = require("audit.msgpack")
 local elf = require("audit.elf")
 local dwarf = require("audit.dwarf")
+local vmprofile = require("audit.vmprofile")
 local ffi = require("ffi")
 
 -- RaptorJIT auditlog analyzer
 
--- auditlog:new(string) -> Auditlog
+-- audit:new(string) -> Auditlog
 --    Load Auditlog at path.
 --
 -- Auditlog.events -> array[Event]
@@ -16,9 +17,13 @@ local ffi = require("ffi")
 --
 -- Auditlog:trace_contour(Trace) -> contour
 --    Return contour for Trace.
+--
+-- Auditlog:add_profile(string, number|nil)
+--   Load VMProfile at path and add it to AuditLog.
+--   The second argument is a timestamp that defaults to os.time().
 
 local Auditlog, Memory, VMProfile = {}, {}, {}
-local Event, Prototype, Trace = {}, {}, {}
+local Event, Prototype, Trace, TraceAbort = {}, {}, {}, {}
 
 function Auditlog:new (path)
    local self = {
@@ -28,7 +33,8 @@ function Auditlog:new (path)
       events = {},
       prototypes = Memory:new(), -- new_prototype
       ctypes = {}, -- new_ctypeid
-      traces = {} -- trace_stop
+      traces = {}, -- trace_stop
+      profiles = {},
    }
    self = setmetatable(self, {__index=Auditlog})
    -- Read auditlog
@@ -44,7 +50,7 @@ function Auditlog:new (path)
          break
       end
    end
-   assert(dwo, "Unable to find DARF debug info in auditlog.")
+   assert(dwo, "Unable to find DWARF debug info in auditlog.")
    -- Parse debug information entries (DIE)
    for name, section in elf.new(dwo.data):sections() do
       self.dwarf:add_section(name, section)
@@ -86,8 +92,9 @@ end
 
 function Auditlog:parse_event (event)
    assert(event.type == 'event')
+   event.id = #self.events+1
    event = Event:new(event, self.events[#self.events])
-   self.events[#self.events+1] = event
+   self.events[event.id] = event
 
    if event.event == 'new_prototype' then
       local proto = assert(self.memory[event.GCproto])
@@ -109,6 +116,7 @@ function Auditlog:parse_event (event)
       local trace = assert(self.memory[event.GCtrace])
       local jitstate = assert(self.memory[event.jit_State])
       event.trace = Trace:new{
+         auditlog = self,
          GCtrace = trace,
          mcode = assert(self.memory[trace.mcode]),
          snap = assert(self.memory[trace.snap]),
@@ -126,7 +134,8 @@ function Auditlog:parse_event (event)
       local trace_error = ffi.cast(TraceError_t, event.TraceError)
       local jitstate = assert(self.memory[event.jit_State])
       local bclog = assert(self.memory[jitstate.bclog])
-      event.trace_abort = {
+      event.trace_abort = TraceAbort:new{
+         auditlog = self,
          TraceError = self.dwarf:enum_name(trace_error),
          jit_State = jitstate,
          bclog = bclog
@@ -153,10 +162,14 @@ end
 
 function Event:new (o, prev)
    o.prev = prev
-   return setmetatable(o, {__index=Event})
+   return setmetatable(o, {__index=Event, __tostring=Event.__tostring})
 end
 
 function Event:nanodelta ()
+   self._nanodelta = self._nanodelta or self:nanodelta1()
+   return self._nanodelta
+end
+function Event:nanodelta1 ()
    if self.prev then
       return self.nanotime - self.prev.nanotime
    else
@@ -164,9 +177,42 @@ function Event:nanodelta ()
    end
 end
 
+function Event:reltime ()
+   self._reltime = self._reltime or self:reltime1()
+   return self._reltime
+end
+function Event:reltime1 ()
+   local event = self
+   local time = 0
+   while event.prev do
+      time = time + tonumber(event:nanodelta())/1e9
+      event = event.prev
+   end
+   return time
+end
+
+function Event:__tostring ()
+   local details = ''
+   if self.event == 'new_prototype' then
+      details = self.prototype
+   elseif self.event == 'new_ctypeid' then
+      details = ("%d %s"):format(self.id, self.desc)
+   elseif self.event == 'trace_stop' then
+      details = self.trace
+   elseif self.event == 'trace_abort' then
+      details = self.trace_abort
+   end
+   return ("Event %s (%s)"):format(self.event, details)
+end
+
 function Prototype:new (o)
-   local self = setmetatable(o, {__index=Prototype})
-   self.lineinfo = self:colocated(self.GCproto.lineinfo, "uint32_t")
+   local self = setmetatable(o, {__index=Prototype,
+                                 __tostring=Prototype.__tostring})
+   if self.GCproto.lineinfo ~= nil then
+      self.lineinfo = self:colocated(self.GCproto.lineinfo, "uint32_t")
+   else
+      self.lineinfo = nil
+   end
    if self.GCproto.declname ~= nil then
       self.declname = ffi.string(self:colocated(self.GCproto.declname, "char"))
    else
@@ -178,6 +224,7 @@ end
 function Prototype:colocated (coptr, t)
    assert(self.address ~= nil)
    assert(self.GCproto ~= nil)
+   assert(coptr ~= nil)
    return ffi.cast(
       ffi.typeof("$*", ffi.typeof(t)),
       ffi.cast("uintptr_t", self.GCproto)
@@ -185,31 +232,35 @@ function Prototype:colocated (coptr, t)
    )
 end
 
-function Prototype:firstline ()
-   return self.GCproto.firstline
+function Prototype:bcline (pos)
+   return self.lineinfo and self.lineinfo[pos]
 end
 
-function Prototype:bcline (pos)
-   return self.lineinfo[pos]
+function Prototype:__tostring ()
+   return ("%s:%d:%s"):format(self.chunkname,
+                              self.GCproto.firstline,
+                              self.declname)
 end
 
 function Trace:new (o)
-   return setmetatable(o, {__index=Trace})
+   return setmetatable(o, {__index=Trace, __tostring=Trace.__tostring})
 end
 
-function Auditlog:trace_events (trace)
-   local start_id = self:trace_start_id(trace.GCtrace.parent,
-                                        trace.GCtrace.startpc)
+function Trace:start_id ()
+   return self.auditlog:trace_start_id(self.GCtrace.parent,
+                                       self.GCtrace.startpc)
+end
+
+function Trace:events ()
+   local start_id = self:start_id()
    local events = {}
-   for _, event in ipairs(self.events) do
+   for _, event in ipairs(self.auditlog.events) do
       -- Collect event that created this trace
-      if event.event == 'trace_stop' and event.trace == trace then
+      if event.event == 'trace_stop' and event.trace == self then
          events[#events+1] = event
          -- Collect trace aborts with the same start point
       elseif event.event == 'trace_abort' then
-         local jitstate = event.trace_abort.jit_State
-         local abort_start_id = self:trace_start_id(jitstate.parent,
-                                                    jitstate.startpc)
+         local abort_start_id = event.trace_abort:start_id()
          if abort_start_id == start_id then
             events[#events+1] = event
          end
@@ -218,24 +269,116 @@ function Auditlog:trace_events (trace)
    return events
 end
 
-function Auditlog:trace_contour (trace)
+function Trace:lineinfo (bcpos)
+   bcpos = bcpos or 0
+   local bcrec = self.bclog[bcpos]
+   local proto = self.auditlog.prototypes[bcrec.pt]
+   return {
+      framedepth = bcrec.framedepth,
+      chunkname = (proto and proto.chunkname) or '?',
+      chunkline = (proto and proto:bcline(bcrec.pos)) or 0,
+      declname = (proto and proto.declname) or '?',
+      declline = (proto and proto.GCproto.firstline) or 0
+   }
+end
+
+function Trace:__tostring ()
+   local lineinfo = self:lineinfo(0)
+   return ("Trace %d from %s:%d:%s")
+      :format(self.traceno,
+              lineinfo.chunkname,
+              lineinfo.chunkline,
+              lineinfo.declname)
+end
+
+function Trace:contour ()
    local contour = {}
    local depth
-   for i=0, trace.jit_State.nbclog-1 do
-      local bcrec = trace.bclog[i]
-      local proto = self.prototypes[bcrec.pt]
-      if proto and bcrec.framedepth ~= depth then
-         depth = bcrec.framedepth
-         contour[#contour+1] = {
-            depth = depth,
-            chunkname = proto.chunkname,
-            chunkline = proto.lineinfo[bcrec.pos],
-            declname = proto.declname,
-            declline = proto.GCproto.firstline
-         }
+   for bcpos=0, self.jit_State.nbclog-1 do
+      local lineinfo = self:lineinfo(bcpos)
+      if lineinfo.framedepth ~= depth and lineinfo.declname ~= '?' then
+         depth = lineinfo.framedepth
+         contour[#contour+1] = lineinfo
       end
    end
    return contour
+end
+
+function TraceAbort:new (o)
+   return setmetatable(o, {__index=TraceAbort,
+                           __tostring=TraceAbort.__tostring})
+end
+
+function TraceAbort:start_id ()
+   return self.auditlog:trace_start_id(self.jit_State.parent,
+                                       self.jit_State.startpc)
+end
+
+function TraceAbort:__tostring ()
+   local bcrec_0 = self.bclog[0]
+   local proto_0 = self.auditlog.prototypes[bcrec_0.pt]
+   local chunkname_0 = (proto_0 and proto_0.chunkname) or '?'
+   local chunkline_0 = (proto_0 and proto_0:bcline(bcrec_0.pos)) or 0
+   local declname_0 = (proto_0 and proto_0.declname) or '?'
+   local bcrec_err = self.bclog[self.jit_State.nbclog-1]
+   local proto_err = self.auditlog.prototypes[bcrec_err.pt]
+   local chunkname_err = (proto_err and proto_err.chunkname) or '?'
+   local chunkline_err = (proto_err and proto_err:bcline(bcrec_err.pos)) or 0
+   return ("%s at %s:%d during trace from %s:%d:%s")
+      :format(self.TraceError,
+              chunkname_err, chunkline_err,
+              chunkname_0, chunkline_0, declname_0)
+end
+
+function Auditlog:add_profile (path, timestamp)
+   local profile = vmprofile:new(path, self.dwarf)
+   local name = path:match("([^/]+)%.vmprofile")
+   local snapshots = self.profiles[name]
+   local snapshot = {
+      timestamp = timestamp or os.time(),
+      profile = profile
+   }
+   if snapshots then
+      assert(snapshots[#snapshots].timestamp <= snapshot.timestamp,
+             "Auditlog already has a later profile for: "..name)
+      snapshots[#snapshots+1] = snapshot
+   else
+      self.profiles[name] = {snapshot}
+   end
+end
+
+function Auditlog:select_profiles (starttime, endtime)
+   if not endtime then
+      endtime = os.time()
+   elseif endttime < 0 then
+      endtime = endtime + os.time()
+   end
+   if not starttime then
+      starttime = 0
+   elseif starttime < 0 then
+      starttime = starttime + endtime
+   end
+   local profiles = {}
+   for name, snapshots in pairs(self.profiles) do
+      local first, last
+      for _, snapshot in ipairs(snapshots) do
+         if not first or snapshot.timestamp <= starttime then
+            first = snapshot.profile
+         end
+         if not last or snapshot.timestamp <= endtime then
+            last = snapshot.profile
+         end
+         if snapshot.timestamp >= endtime then
+            break
+         end
+      end
+      if first and last and first ~= last then
+         profiles[name] = first:delta(last)
+      else
+         profiles[name] = last or first
+      end
+   end
+   return profiles
 end
 
 -- Map memory addresses to objects

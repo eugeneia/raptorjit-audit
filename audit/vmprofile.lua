@@ -2,7 +2,42 @@ local ffi = require("ffi")
 
 -- RaptorJIT VMprofile reader
 
+-- vmprofile:new(string, DWARF) -> VMProfile
+--    Read VMProfile from path using DWARF debug info.
+--
+-- VMProfile:delta(VMProfile) -> VMProfile
+--    Make a new VMProfile that is the delta of two profiles. a:delta(b) -> b-a
+--
+-- VMProfile:count(traceno, vmst) -> number
+--    Sample count for Trace by traceno in VM state.
+--
+-- VMProfile:hot_traces() -> array
+--    Return traces and their sample counts sorted by total samples.
+--
+-- VMProfile:total_samples() -> number
+--    Total number of samples counted in VMProfile.
+--
+-- VMProfile:total_vmst_samples() -> table
+--    Total number of samples for each VM state.
+--
+-- VMProfile:dump(string)
+--    Dump VMProfile to file at path.
+
 local VMProfile = {}
+
+VMProfile.vmstates = {
+   [0] = "interp",
+   [1] = "c",
+   [2] = "igc",
+   [3] = "exit",
+   [4] = "record",
+   [5] = "opt",
+   [6] = "asm",
+   [7] = "head",
+   [8] = "loop",
+   [9] = "jgc",
+   [10] = "ffi"
+}
 
 local vmprofile_t = ffi.typeof[[struct {
    uint32_t magic;               /* 0x1d50f007 */
@@ -33,12 +68,14 @@ function VMProfile:new (path, dwarf)
 end
 
 function VMProfile:index (traceno, vmst)
+   traceno = traceno or 0
    assert(traceno <= self.specs.trace_max)
    assert(vmst < self.specs.vmst_max)
    return traceno*self.specs.vmst_max + vmst
 end
 
 function VMProfile:count (traceno, vmst)
+   traceno = traceno or 0
    return tonumber(self.profile.count[self:index(traceno, vmst)])
 end
 
@@ -64,29 +101,19 @@ function VMProfile:delta (vmprofile)
    return delta
 end
 
-VMProfile.vmstates = {
-   [0] = "interp",
-   [1] = "c",
-   [2] = "igc",
-   [3] = "exit",
-   [4] = "record",
-   [5] = "opt",
-   [6] = "asm",
-   [7] = "head",
-   [8] = "loop",
-   [9] = "jgc",
-   [10] = "ffi"
-}
-
 function VMProfile:vmst_name (vmst)
    return VMProfile.vmstates[vmst]
 end
 
 function VMProfile:hot_traces ()
+   self._hot_traces = self._hot_traces or self:hot_traces1()
+   return self._hot_traces
+end
+function VMProfile:hot_traces1 ()
    local traces = {}
    for traceno=0, self.specs.trace_max do
       local trace = {
-         id = traceno,
+         traceno = (traceno > 0) and traceno or nil,
          vmst = {},
          total = 0
       }
@@ -105,6 +132,11 @@ function VMProfile:hot_traces ()
 end
 
 function VMProfile:total_samples ()
+   self._total_samples = self._total_samples or self:total_samples1()
+   return self._total_samples
+end
+
+function VMProfile:total_samples1 ()
    local total = 0
    for traceno=0, self.specs.trace_max do
       for vmst=0, self.specs.vmst_max-1 do
@@ -115,6 +147,11 @@ function VMProfile:total_samples ()
 end
 
 function VMProfile:total_vmst_samples ()
+   self._total_vmst_samples = self._total_vmst_samples
+                           or self:total_vmst_samples1()
+   return self._total_vmst_samples
+end
+function VMProfile:total_vmst_samples1 ()
    local p = {}
    for vmst=0, self.specs.vmst_max-1 do
       local vmst_name = self:vmst_name(vmst)
@@ -123,6 +160,12 @@ function VMProfile:total_vmst_samples ()
       end
    end
    return p
+end
+
+function VMProfile:dump (path)
+   local f = assert(io.open(path, "w"))
+   assert(f:write(self.blob))
+   assert(f:close())
 end
 
 -- Module vmprofile
