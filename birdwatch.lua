@@ -73,6 +73,7 @@ function Birdwatch:html_report_profile (profile, out)
    local hot_traces = profile:hot_traces()
    out:write("<details>\n")
    out:write("<summary>Hot traces</summary>\n")
+   out:write("<div class=scroll>\n")
    out:write("<table>\n")
    out:write("<thead>\n")
    out:write("<tr>\n")
@@ -104,6 +105,7 @@ function Birdwatch:html_report_profile (profile, out)
    end
    out:write("</tbody>\n")
    out:write("</table>\n")
+   out:write("</div>\n")
    out:write("</details>\n")
 end
 
@@ -115,6 +117,7 @@ function Birdwatch:html_report_traces (out)
    table.sort(by_traceno)
    out:write("<details>\n")
    out:write("<summary>Traces</summary>\n")
+   out:write("<div class=scroll>\n")
    for _, traceno in ipairs(by_traceno) do
       local trace = self.auditlog.traces[traceno]
       out:write(("<details id=trace-%d>\n"):format(traceno))
@@ -122,6 +125,7 @@ function Birdwatch:html_report_traces (out)
       self:html_report_trace(trace, out)
       out:write("</details>\n")
    end
+   out:write("</div>\n")
    out:write("</details>\n")
 end
 
@@ -129,7 +133,7 @@ function Birdwatch:html_report_trace (trace, out)
    -- Contour
    out:write("<details>\n")
    out:write("<summary>Function contour</summary>\n")
-   out:write("<pre>\n")
+   out:write("<pre class='scroll short'>\n")
    for _, info in ipairs(trace:contour()) do
       out:write(("%s%s:%d:%s:%d\n"):format(
             (' '):rep(info.framedepth*3),
@@ -143,6 +147,7 @@ function Birdwatch:html_report_trace (trace, out)
    -- Events
    out:write("<details>\n")
    out:write("<summary>Events</summary>\n")
+   out:write("<div class='scroll short'>\n")
    out:write("<table>\n")
    out:write("<tbody>\n")
    for _, event in ipairs(trace:events()) do
@@ -153,12 +158,14 @@ function Birdwatch:html_report_trace (trace, out)
    end
    out:write("</tbody>\n")
    out:write("</table>\n")
+   out:write("</div>\n")
    out:write("</details>\n")
 end
 
 function Birdwatch:html_report_events (out)
    out:write("<details>\n")
    out:write("<summary>Trace events</summary>\n")
+   out:write("<div class=scroll>\n")
    out:write("<table>\n")
    out:write("<tbody>\n")
    for _, event in pairs(self.auditlog.events) do
@@ -174,6 +181,7 @@ function Birdwatch:html_report_events (out)
    end
    out:write("</tbody>\n")
    out:write("</table>\n")
+   out:write("</>\n")
    out:write("</details>\n")
 end
 
@@ -189,23 +197,26 @@ end
 
 function Birdwatch:html_report_style (out)
    out:write([[<style>
-
+      //body { display: flex; align-items: flex-start; }
       details { margin: 0.25em; padding: 0.25em; padding-left: 1em;
                 border-radius: 0.25em; border: thin solid #ccc;
-                overflow: auto; box-sizing: border-box; }
+                overflow: auto; }
       summary { cursor: pointer; font-weight: bold; font-size: smaller; }
-      //details > *:last-child { margin-bottom: 0.5em; }
+      details > *:nth-child(2) { margin-top: 0.5em; }
 
       summary:hover { color: #0d51bf; }
       *[focus] { box-shadow: 0 0 0.5em #0d51bf; }
 
       table { border-collapse: collapse; }
-      th { border-bottom: thin solid #ccc; font-size: smaller; color: #333; }
+      th { font-size: smaller; color: #333; background: #f4f4f4; }
       td, th { padding: 0.4em 0.5em; }
-      tbody > tr:nth-of-type(even) { background: #0000000b; }
+      thead { position: sticky; top: 0; }
+      tbody > tr:nth-of-type(even) { background: #f4f4f4; }
       td.right { text-align: right; }
 
-      pre { max-height: 70%; overflow: auto; }
+      .scroll { overflow: auto; max-height: 30vh;
+                border-top: thin solid #ccc; }
+      .short { max-height: 12vh; }
 
       </style>]])
 end
@@ -227,6 +238,8 @@ function Birdwatch:html_report_script (out)
          current_focus.removeAttribute('focus')
        current_focus = dest
        current_focus.setAttribute('focus', '')
+       event.preventDefault()
+       dest.scrollIntoView({block: 'center'})
      }
      document.querySelectorAll("a").forEach(a => {
        if (a.getAttribute('href'))
