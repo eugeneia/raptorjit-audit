@@ -2,6 +2,7 @@ local msgpack = require("audit.msgpack")
 local elf = require("audit.elf")
 local dwarf = require("audit.dwarf")
 local vmprofile = require("audit.vmprofile")
+local bytecode = require("audit.bytecode")
 local ffi = require("ffi")
 
 -- RaptorJIT auditlog analyzer
@@ -99,6 +100,7 @@ function Auditlog:parse_event (event)
    if event.event == 'new_prototype' then
       local proto = assert(self.memory[event.GCproto])
       event.prototype = Prototype:new{
+         auditlog = self,
          address = event.GCproto,
          GCproto = proto,
          chunkname = self:lj_strdata(assert(self.memory[proto.chunkname]))
@@ -208,8 +210,13 @@ end
 function Prototype:new (o)
    local self = setmetatable(o, {__index=Prototype,
                                  __tostring=Prototype.__tostring})
+   self.bcins_t = assert(self.auditlog.dwarf:find_die("BCIns")):ctype()
+   self.bcline_t = assert(self.auditlog.dwarf:find_die("BCLine")):ctype()
+   self.bcop_t = assert(self.auditlog.dwarf:find_die("BCOp")):ctype()
+   self.bytecodes =
+      self:colocated(self.address+ffi.sizeof(self.GCproto[0]), self.bcins_t)
    if self.GCproto.lineinfo ~= nil then
-      self.lineinfo = self:colocated(self.GCproto.lineinfo, "uint32_t")
+      self.lineinfo = self:colocated(self.GCproto.lineinfo, self.bcline_t)
    else
       self.lineinfo = nil
    end
@@ -230,6 +237,10 @@ function Prototype:colocated (coptr, t)
       ffi.cast("uintptr_t", self.GCproto)
       + (ffi.cast("uintptr_t", coptr) - ffi.cast("uintptr_t", self.address))
    )
+end
+
+function Prototype:bc (pos)
+   return bytecode:from_prototype(self, pos)
 end
 
 function Prototype:bcline (pos)
@@ -269,6 +280,15 @@ function Trace:events ()
    return events
 end
 
+function Trace:__tostring ()
+   local lineinfo = self:lineinfo(0)
+   return ("Trace %d from %s:%d:%s")
+      :format(self.traceno,
+              lineinfo.chunkname,
+              lineinfo.chunkline,
+              lineinfo.declname)
+end
+
 function Trace:lineinfo (bcpos)
    bcpos = bcpos or 0
    local bcrec = self.bclog[bcpos]
@@ -280,15 +300,6 @@ function Trace:lineinfo (bcpos)
       declname = (proto and proto.declname) or '?',
       declline = (proto and proto.GCproto.firstline) or 0
    }
-end
-
-function Trace:__tostring ()
-   local lineinfo = self:lineinfo(0)
-   return ("Trace %d from %s:%d:%s")
-      :format(self.traceno,
-              lineinfo.chunkname,
-              lineinfo.chunkline,
-              lineinfo.declname)
 end
 
 function Trace:contour ()
@@ -304,6 +315,20 @@ function Trace:contour ()
    return contour
 end
 
+function Trace:bytecodes ()
+   local bytecodes = {}
+   for bcpos=0, self.jit_State.nbclog-1 do
+      local bcrec = self.bclog[bcpos]
+      local proto = self.auditlog.prototypes[bcrec.pt]
+      if proto then
+         bytecodes[#bytecodes+1] = proto:bc(bcrec.pos)
+      else
+         bytecodes[#bytecodes+1] = {}
+      end
+   end
+   return bytecodes
+end
+
 function TraceAbort:new (o)
    return setmetatable(o, {__index=TraceAbort,
                            __tostring=TraceAbort.__tostring})
@@ -313,6 +338,10 @@ function TraceAbort:start_id ()
    return self.auditlog:trace_start_id(self.jit_State.parent,
                                        self.jit_State.startpc)
 end
+
+TraceAbort.lineinfo = Trace.lineinfo
+TraceAbort.contour = Trace.contour
+TraceAbort.bytecodes = Trace.bytecodes
 
 function TraceAbort:__tostring ()
    local bcrec_0 = self.bclog[0]

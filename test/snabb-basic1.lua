@@ -22,6 +22,9 @@ for _, info in ipairs(trace21:contour()) do
          info.declname,
          info.chunkline-info.declline))
 end
+for _, bc in ipairs(trace21:bytecodes()) do
+   print(bc.name, '', bc.a, bc.b, bc.c, bc.d, bc.j)
+end
 
 local trace25 = auditlog.traces[25]
 print()

@@ -48,11 +48,11 @@ local vmprofile_ptr_t = ffi.typeof("$ *", vmprofile_t)
 
 function VMProfile:new (path, dwarf)
    local self = setmetatable({}, {__index=VMProfile})
-   local trace_max = dwarf:find_die('LJ_VMPROFILE_TRACE_MAX')
-   local vmst_max = dwarf:find_die("LJ_VMST__MAX")
+   local trace_max = dwarf and dwarf:find_die('LJ_VMPROFILE_TRACE_MAX')
+   local vmst_max = dwarf and dwarf:find_die("LJ_VMST__MAX")
    self.specs = {
       trace_max = (trace_max and trace_max:attributes().const_value) or 4096,
-      vmst_max = assert(vmst_max):attributes().const_value
+      vmst_max = (vmst_max and vmst_max:attributes().const_value) or 11
    }
    -- Read profile
    local f = io.open(path, "r")
