@@ -3,6 +3,7 @@ local elf = require("audit.elf")
 local dwarf = require("audit.dwarf")
 local vmprofile = require("audit.vmprofile")
 local bytecode = require("audit.bytecode")
+local ir = require("audit.ir")
 local ffi = require("ffi")
 
 -- RaptorJIT auditlog analyzer
@@ -31,6 +32,7 @@ function Auditlog:new (path)
       log = nil,
       memory = Memory:new(),
       dwarf = dwarf.new(),
+      ir_mode = nil,
       events = {},
       prototypes = Memory:new(), -- new_prototype
       ctypes = {}, -- new_ctypeid
@@ -62,6 +64,10 @@ function Auditlog:new (path)
       -- Load memory logged in auditlog into map memory[address]=obj
       if entry.type == 'memory' then
          self:parse_memory(entry)
+         -- Load lj_ir_mode
+         if entry.hint == 'lj_ir_mode' then
+            self.ir_mode = self.memory[entry.address]
+         end
       end
       -- Parse event
       if entry.type == 'event' then
@@ -86,13 +92,25 @@ end
 function Auditlog:parse_memory (event)
    assert(event.type == 'memory')
    local hint = event.hint:match("[a-zA-Z0-9_]+")
-   local ptr_t = ffi.typeof("$ *", assert(self.dwarf:find_die(hint)):ctype())
+   local die = assert(self.dwarf:find_die(hint))
+   -- XXX - tricky to decide whether to make a pointer to ctype or
+   --       if ctype is already a pointer type!
+   local ptr_t
+   if die.tag == 'variable' then
+      ptr_t = die:ctype()
+   else
+      ptr_t = ffi.typeof("$ *", die:ctype())
+   end
    local ptr = ffi.cast(ptr_t, event.data)
    self.memory[assert(event.address)] = ptr
 end
 
 function Auditlog:parse_event (event)
    assert(event.type == 'event')
+   if event.event == 'new_ctypeid' and event.id then
+      -- Rename ctype id field
+      event.ctype = event.id
+   end
    event.id = #self.events+1
    event = Event:new(event, self.events[#self.events])
    self.events[event.id] = event
@@ -111,8 +129,8 @@ function Auditlog:parse_event (event)
       -- NOP
 
    elseif event.event == 'new_ctypeid' then
-      event.id = self:fix_id(event.id)
-      self.ctypes[event.id] = event.desc
+      event.ctype = self:fix_id(event.ctype)
+      self.ctypes[event.ctype] = event.desc
 
    elseif event.event == 'trace_stop' then
       local trace = assert(self.memory[event.GCtrace])
@@ -254,7 +272,36 @@ function Prototype:__tostring ()
 end
 
 function Trace:new (o)
-   return setmetatable(o, {__index=Trace, __tostring=Trace.__tostring})
+   local self = setmetatable(o, {__index=Trace, __tostring=Trace.__tostring})
+   self.irop_t = assert(self.auditlog.dwarf:find_die("IROp")):ctype()
+   local ir_max = assert(self.auditlog.dwarf:find_die("IR__MAX"))
+   self.ir_max = ir_max:attributes().const_value
+   self.irm_t = assert(self.auditlog.dwarf:find_die("IRMode")):ctype()
+   self.irt_t = assert(self.auditlog.dwarf:find_die("IRType")):ctype()
+   local ref_bias = assert(self.auditlog.dwarf:find_die("REF_BIAS"))
+   self.ref_bias = ref_bias:attributes().const_value
+   return self
+end
+
+function Trace:parent ()
+   local parent = self.auditlog:fix_id(self.GCtrace.parent)
+   if parent ~= 0 then
+      return assert(self.auditlog.traces[parent])
+   end
+end
+
+function Trace:children ()
+   self._children = self._children or self:children1()
+   return self._children
+end
+function Trace:children1 ()
+   local children = {}
+   for _, trace in pairs(self.auditlog.traces) do
+      if trace:parent() == self then
+         children[#children+1] = trace
+      end
+   end
+   return children
 end
 
 function Trace:start_id ()
@@ -278,6 +325,22 @@ function Trace:events ()
       end
    end
    return events
+end
+
+function Trace:instructions ()
+   local nk = self.ref_bias - self.GCtrace.nk
+   local k = {}
+   -- Collect constants
+   for i = 0, nk-1 do
+      k[nk-i] = ir:new(self, i, k[nk-i+1])
+   end
+   -- Parse IR instructions
+   local nins = self.GCtrace.nins - self.ref_bias - 1
+   local ret = {}
+   for i = 1, nins-1 do
+      ret[#ret+1] = ir:new(self, nk+i, ret[#ret], k)
+   end
+   return ret
 end
 
 function Trace:__tostring ()

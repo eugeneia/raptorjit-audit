@@ -14,6 +14,12 @@ print("nctypes", nctypes)
 local trace21 = assert(auditlog.traces[21])
 print()
 print(trace21)
+print("parent")
+print("", trace21:parent() or "none, this is a root trace")
+print("children")
+for _, child in ipairs(trace21:children()) do
+   print("", child)
+end
 for _, info in ipairs(trace21:contour()) do
    print(("%s%s:%d:%s:%d"):format(
          (' '):rep(info.framedepth),
@@ -39,6 +45,11 @@ for _, info in ipairs(trace25:contour()) do
          info.chunkline,
          info.declname,
          info.chunkline-info.declline))
+end
+local insn = trace25:instructions()
+for i, ins in ipairs(insn) do
+   print(i, ins.sunk and '>' or '', ins.reg or ins.slot or '', ins.t or '',
+         ins.opcode, ins.op1 or '', ins.op2 or '') -- , ins.hint)
 end
 
 auditlog:add_profile("test/snabb-basic1/vmprofile/apps.basic.basic_apps.vmprofile")
