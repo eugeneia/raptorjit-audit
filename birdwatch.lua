@@ -1,5 +1,6 @@
 local audit = require("audit")
 local vmprofile = require("audit.vmprofile")
+local IR = require("audit.ir")
 
 local Birdwatch = {}
 
@@ -315,6 +316,14 @@ function Birdwatch:html_report_bytecodes (bytecodes, out)
 end
 
 function Birdwatch:html_report_instructions (instructions, out, traceno)
+   local function iropclass (opcode)
+      for _, kind in ipairs{'Loop', 'Phi', 'Memref', 'Load', 'Store',
+                            'Guard', 'Alloc', 'Barrier', 'Call'}
+      do
+         if IR.Op[kind][opcode] then return kind end
+      end
+      return 'Misc'
+   end
    out:write("<div class='scroll short'>\n")
    out:write("<table>\n")
    out:write("<thead>\n")
@@ -331,12 +340,14 @@ function Birdwatch:html_report_instructions (instructions, out, traceno)
    out:write("</thead>\n")
    out:write("<tbody>\n")
    for i, ins in ipairs(instructions) do
+      if ins.opcode == 'nop' then goto skip end
       out:write(("<tr id=ins-%d-%d>\n"):format(traceno, i))
       out:write(("<td class=right><tt>%d</tt></td>\n"):format(i))
       out:write(("<td>%s</td>\n"):format(ins.sunk and '>' or ''))
       out:write(("<td><tt>%s</tt></td>\n"):format(ins.reg or ins.slot or ''))
       out:write(("<td><small>%s</small></td>\n"):format(ins.t))
-      out:write(("<td><tt><b>%s</b></tt></td>\n"):format(ins.opcode))
+      out:write(("<td class=irop-%s><tt><b>%s</b></tt></td>\n")
+         :format(iropclass(ins.opcode), ins.opcode))
       for _, op in ipairs{'op1', 'op2'} do
          local val = ins[op]
          if type(val) == 'number' then
@@ -351,13 +362,26 @@ function Birdwatch:html_report_instructions (instructions, out, traceno)
                out:write(("<td class=right><tt><a href=#ins-%d-%d>%d</a></tt></td>\n")
                   :format(traceno, ref, ref))
             elseif val:match("^#%d+$") then
-                  out:write(("<td class=right><tt>%s</tt></td>\n"):format(val))
+               out:write(("<td class=right><tt>%s</tt></td>\n"):format(val))
+            elseif val:match("^<flags[^>]+>$") then
+               local flags = val:match("<flags ?([^>]*)>")
+               out:write(("<td><span class=irflags>%s</span></td>\n")
+                  :format(flags))
+            elseif val:match("^<func[^>]+>$") then
+               local func = val:match("<func ?([^>]*)>")
+               local short = func:match(":([^:]+)$") or "func"
+               out:write(("<td><span class=irfunc><abbr title='%s'>%s</abbr></span></td>\n")
+                  :format(func, short))
+            elseif val:match("^<ctype[^>]+>$") then
+               local ctype = val:match("<ctype ?([^>]*)>")
+               out:write(("<td><span class=irctype>%s</span></td>\n")
+                  :format(ctype))
             elseif val:match("^<[^>]+>$") then
                local tag, more = val:match("<([a-z]+) ?([^>]*)>")
-               out:write(("<td><abbr title='%s'>%s</abbr></td>\n")
+               out:write(("<td><span class=irnyi><abbr title='%s'>%s</abbr></span></td>\n")
                   :format(more, tag))
             else
-               out:write(("<td>%s</td>\n"):format(val))
+               out:write(("<td><small>\"%s\"</small></td>\n"):format(val))
             end
          else
             out:write("<td></td>\n")
@@ -365,6 +389,7 @@ function Birdwatch:html_report_instructions (instructions, out, traceno)
       end
       out:write(("<td><small><em>%s</em></small></td>\n"):format(ins.hint))
       out:write("</tr>\n")
+      ::skip::
    end
    out:write("</tbody>\n")
    out:write("</table>\n")
@@ -400,6 +425,28 @@ function Birdwatch:html_report_style (out)
       .scroll { overflow: auto; max-height: 60vh;
                 border-top: thin solid #ccc; }
       .short { max-height: 30vh; }
+
+      span.irflags { border: solid thin #777; border-radius: 1em;
+                     padding: 0 0.3em; font-size: small;
+                     color: #333; background: #ffe995; }
+      span.irfunc  { border: solid thin #777; border-radius: 1em;
+                     padding: 0 0.3em; font-size: small;
+                     color: #333; background: #e2deff; }
+      span.irctype { border: solid thin #777; border-radius: 1em;
+                     padding: 0 0.3em; font-size: small;
+                     color: #333; background: #ebf4ff; }
+      span.irnyi   { border: solid thin #777; border-radius: 1em;
+                     padding: 0 0.3em; font-size: small;
+                     color: #333; background: #ebebeb; }
+
+      .irop-Barrier { color: #a10705; }
+      .irop-Load, .irop-Memref { color: #0d52bf; }
+      .irop-Store { color: #3a9104; }
+      .irop-Guard { color: #d48e15; }
+      .irop-Loop { background: #f4679d; }
+      .irop-Phi { color: #bc245d; }
+      .irop-Alloc { background: #9bdb4d; }
+      .irop-Call { color: #7239b3; }
 
       </style>]])
 end

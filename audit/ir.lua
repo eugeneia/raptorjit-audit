@@ -105,35 +105,37 @@ local Opcodes = {
    rename = 'RENAME (ref, #snap): Renamed reference below snapshot'
 }
 
+local Op = {}
+IR.Op = Op
+
 function set (se)
    local s = {}
    for _, e in ipairs(se) do s[e] = true end
    return s
 end
 
-local OpAlloc = set{ 'snew', 'xsnew', 'tnew', 'tdup', 'cnew', 'cnewi' }
-local OpArith = set{ 'add', 'sub', 'mul', 'div', 'mod', 'pow', 'neg', 'abs',
-                     'atan2', 'ldexp', 'min', 'max', 'fpmath', 'addov',
-                     'subov', 'mulov' }
-local OpBarrier = set{ 'tbar', 'obar', 'xbar' }
-local OpBit = set{ 'bnot', 'bswap', 'band', 'bor', 'bxor', 'bshl', 'bshr',
-                   'bsar', 'brol', 'bror' }
-local OpCall = set{ 'calln', 'calll', 'calls', 'callxs', 'carg' }
-local OpConst = set{ 'kpri', 'kint', 'kgc', 'kptr', 'kkptr', 'knull', 'knum',
-                     'kint64', 'kslot' }
-local OpConst64 = set{ 'kgc', 'kptr', 'kkptr', 'knum', 'kint64' }
-local OpGuard = set{ 'lt', 'ge', 'le', 'gt', 'ult', 'uge', 'ule', 'ugt', 'eq',
-                     'ne', 'abc', 'retf' }
-local OpLoad = set{ 'aload', 'hload', 'uload', 'fload', 'xload', 'sload',
-                    'vload' }
-local OpStore = set{ 'astore', 'hstore', 'ustore', 'fstore', 'xstore' }
-local OpLoop = set{ 'loop' }
-local OpMemref = set{ 'aref', 'hrefk', 'href', 'newref', 'urefo', 'urefc',
-                      'fref', 'strref' }
-local OpMisc = set{ 'nop', 'base', 'pval', 'gcstep', 'hiop', 'loop', 'use',
-                    'phi', 'rename' }
-local OpNop = set{ 'nop' }
-local OpPhi = set{ 'phi' }
+Op.Alloc = set{ 'snew', 'xsnew', 'tnew', 'tdup', 'cnew', 'cnewi' }
+Op.Arith = set{ 'add', 'sub', 'mul', 'div', 'mod', 'pow', 'neg', 'abs',
+                'atan2', 'ldexp', 'min', 'max', 'fpmath', 'addov',
+                'subov', 'mulov' }
+Op.Barrier = set{ 'tbar', 'obar', 'xbar' }
+Op.Bit = set{ 'bnot', 'bswap', 'band', 'bor', 'bxor', 'bshl', 'bshr',
+              'bsar', 'brol', 'bror' }
+Op.Call = set{ 'calln', 'calll', 'calls', 'callxs', 'carg' }
+Op.Const = set{ 'kpri', 'kint', 'kgc', 'kptr', 'kkptr', 'knull', 'knum',
+                'kint64', 'kslot' }
+Op.Const64 = set{ 'kgc', 'kptr', 'kkptr', 'knum', 'kint64' }
+Op.Guard = set{ 'lt', 'ge', 'le', 'gt', 'ult', 'uge', 'ule', 'ugt', 'eq',
+                'ne', 'abc', 'retf' }
+Op.Load = set{ 'aload', 'hload', 'uload', 'fload', 'xload', 'sload', 'vload' }
+Op.Store = set{ 'astore', 'hstore', 'ustore', 'fstore', 'xstore' }
+Op.Loop = set{ 'loop' }
+Op.Memref = set{ 'aref', 'hrefk', 'href', 'newref', 'urefo', 'urefc',
+                 'fref', 'strref' }
+Op.Misc = set{ 'nop', 'base', 'pval', 'gcstep', 'hiop', 'loop', 'use',
+               'phi', 'rename' }
+Op.Nop = set{ 'nop' }
+Op.Phi = set{ 'phi' }
 
 function IR:new (trace, pos, prev, k)
    local ins = trace.ir[pos]
@@ -158,7 +160,7 @@ function IR:new (trace, pos, prev, k)
       ret.slot = (ins.s > 0 and ins.s) or nil
       ret.sunk = self:isSunk(ins.r, ins.s)
       -- Operands
-      if OpConst64[ret.opcode] then
+      if Op.Const64[ret.opcode] then
          -- 64-bit const follows
          ret.next = true
       else
