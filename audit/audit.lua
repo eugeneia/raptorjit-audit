@@ -38,6 +38,7 @@ function Auditlog:new (path)
       ctypes = {}, -- new_ctypeid
       traces = {}, -- trace_stop
       profiles = {},
+      latest_snapshot = 0
    }
    self = setmetatable(self, {__index=Auditlog})
    -- Read auditlog
@@ -430,6 +431,7 @@ function Auditlog:add_profile (path, timestamp)
       timestamp = timestamp or os.time(),
       profile = profile
    }
+   self.latest_snapshot = math.max(self.latest_snapshot, snapshot.timestamp)
    if snapshots then
       assert(snapshots[#snapshots].timestamp <= snapshot.timestamp,
              "Auditlog already has a later profile for: "..name)
@@ -442,7 +444,7 @@ end
 function Auditlog:select_profiles (starttime, endtime)
    if not endtime then
       endtime = os.time()
-   elseif endttime < 0 then
+   elseif endtime < 0 then
       endtime = endtime + os.time()
    end
    if not starttime then

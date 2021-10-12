@@ -6,6 +6,7 @@ local Birdwatch = {}
 
 function Birdwatch:new (arg)
    local self = setmetatable({}, {__index=Birdwatch})
+   self.name = arg.name
    self.auditlog = audit:new(arg.auditlog)
    for _, profile in ipairs(arg.profiles) do
       self.auditlog:add_profile(profile)
@@ -16,7 +17,7 @@ end
 function Birdwatch:html_report (out)
    out:write("<meta charset='utf-8'>\n")
    self:html_report_style(out)
-   self:html_report_profiles(out)
+   self:html_report_profile_snapshots(out)
    self:html_report_traces(out)
    self:html_report_events(out)
    self:html_report_script(out)
@@ -24,10 +25,68 @@ end
 
 local function percent (n, total) return n/total*100 end
 
-function Birdwatch:html_report_profiles (out)
+function Birdwatch:html_report_profile_snapshots (out)
    out:write("<details>\n")
    out:write("<summary>Profiles</summary>\n")
-   local profiles = self.auditlog:select_profiles()
+   local snapshots = {}
+   local now = self.auditlog.latest_snapshot
+   for _=1,5 do
+      snapshots[#snapshots+1] = {
+         profiles = self.auditlog:select_profiles(now-1, now),
+         size = 'second',
+      }
+      now = now - 1
+   end
+   for _=1,2 do
+      snapshots[#snapshots+1] = {
+         profiles = self.auditlog:select_profiles(now-60, now),
+         size = 'minute',
+      }
+      now = now - 60
+   end
+   for _=1,1 do
+      snapshots[#snapshots+1] = {
+         profiles = self.auditlog:select_profiles(now-60*60, now),
+         size = 'hour',
+      }
+      now = now - 60*60
+   end
+   -- Stacks
+   out:write("<div class=profile-snapshots>")
+   for i=#snapshots, 1, -1 do
+      local snap = snapshots[i]
+      out:write(("<div class=snapshot-stack snapshot=snapshot-%d %s>")
+         :format(i, snap.size))
+      local by_name = {}
+      local total_samples = 0
+      for name, profile in pairs(snap.profiles) do
+         by_name[#by_name+1] = name
+         total_samples = total_samples + profile:total_samples()
+      end
+      table.sort(by_name)
+      for _, name in ipairs(by_name) do
+         local profile = snap.profiles[name]
+         local share = percent(profile:total_samples(), total_samples)
+         if share >= 0.5 then
+            out:write(("<div class=portion style='height:%.0fpx;' profile='%s' title='%s (%.1f%%)'></div>")
+               :format(share, name, name, share))
+         end
+      end
+      out:write("</div>")
+   end
+   out:write("</div>")
+   -- Tabs
+   out:write("<div class=profiles>")
+   for i, snapshot in pairs(snapshots) do
+      out:write(("<div class=snapshot id=snapshot-%d>"):format(i))
+      self:html_report_profiles(snapshot.profiles, out)
+      out:write("</div>")
+   end
+   out:write("</div>")
+   out:write("</details>\n")
+end
+
+function Birdwatch:html_report_profiles (profiles, out)
    local total_samples = 0
    local by_name_sorted = {}
    for name, profile in pairs(profiles) do
@@ -48,7 +107,6 @@ function Birdwatch:html_report_profiles (out)
          out:write("</details>\n")
       end
    end
-   out:write("</details>\n")
 end
       
 function Birdwatch:html_report_profile (profile, out)
@@ -448,6 +506,16 @@ function Birdwatch:html_report_style (out)
       .irop-Alloc { background: #9bdb4d; }
       .irop-Call { color: #7239b3; }
 
+      .portion { width: 100%; cursor: pointer; border: thin solid white; }
+      .portion:first-child { border-radius: 0.5em 0.5em 0 0; }
+      .portion:last-child { border-radius: 0 0 0.5em 0.5em; }
+      .snapshot-stack { width: 30px; margin: 2px; }
+      .snapshot-stack[minute] { width: 60px; }
+      .snapshot-stack[hour] { width: 120px; }
+      .profile-snapshots { /*width: 70px;*/ display: flex; overflow: auto; }
+  
+      .snapshot { display: none; }
+
       </style>]])
 end
 
@@ -481,10 +549,46 @@ function Birdwatch:html_report_script (out)
       current_hover = dest
       current_hover.setAttribute('focus', '')
     }
-     document.querySelectorAll("a").forEach(a => {
+    document.querySelectorAll("a").forEach(a => {
        if (a.getAttribute('href'))
          a.addEventListener('click', expand_on_href)
          a.addEventListener('mouseover', highlight_on_href)
+     })
+
+     var openTab = false
+     function openProfilesTabForSnapshot (stack) {
+         if (openTab)
+             openTab.style = "display: none;"
+         while (stack && !stack.getAttribute("snapshot"))
+             stack = stack.parentNode
+         let snapshot = stack.getAttribute("snapshot")
+         let tab = document.querySelector('#' + snapshot)
+         tab.style = "display: block;"
+         openTab = tab
+     }
+     document.querySelectorAll(".snapshot-stack").forEach(el => {
+         el.addEventListener('click', ev => openProfilesTabForSnapshot(ev.target))
+     })
+ 
+     function colorhash (str) {
+         var h = 0;
+         for (var i=0; i < str.length; i++) {
+             h += fmix32(str.charCodeAt(i))
+             h %= 2**32
+         }
+         return "hsl(" + (h % 256) + " 90% 60%)"
+     }
+     // Murmur3 fmix32
+     function fmix32 (h) {
+         h ^= h >> 16
+         h *= 0x85ebca6b
+         h ^= h >> 13
+         h *= 0xc2b2ae35
+         h ^= h >> 16
+         return h
+     }
+     document.querySelectorAll(".portion").forEach(el => {
+         el.style.background = colorhash(el.getAttribute("profile"))
      })
 </script>]])
 end
