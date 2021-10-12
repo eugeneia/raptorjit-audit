@@ -132,6 +132,46 @@ function Birdwatch:html_report_traces (out)
 end
 
 function Birdwatch:html_report_trace (trace, out)
+   -- Relations
+   out:write("<details>\n")
+   out:write("<summary>Relations</summary>\n")
+   out:write("<table>\n")
+   out:write("<thead>\n")
+   out:write("<tr><th>Parent</th></tr>\n")
+   out:write("</thead>\n")
+   out:write("</tr>\n")
+   out:write("<tbody>\n")
+   out:write("<tr><td>\n")
+   local parent = trace:parent()
+   if parent then
+      out:write(("<a href=#trace-%d>%s</a>\n"):format(parent.traceno, parent))
+   else
+      out:write("None, this is a root trace")
+   end
+   out:write("</td></tr>\n")
+   out:write("</tbody>\n")
+   out:write("</table>\n")
+   out:write("<div class='scroll short'>\n")
+   out:write("<table>\n")
+   out:write("<thead>\n")
+   out:write("<tr><th>Children</th></tr>\n")
+   out:write("</thead>\n")
+   out:write("</tr>\n")
+   out:write("<tbody>\n")
+   local children = trace:children()
+   for _, child in ipairs(children) do
+      out:write("<tr>\n")
+      out:write(("<td><a href=#trace-%d>%s</a></td>\n")
+         :format(child.traceno, child))
+      out:write("</tr>\n")
+   end
+   if #children == 0 then
+      out:write("<tr><td>None</td></tr>\n")
+   end
+   out:write("</tbody>\n")
+   out:write("</table>\n")
+   out:write("</div>\n")
+   out:write("</details>\n")
    -- Contour
    out:write("<details>\n")
    out:write("<summary>Function contour</summary>\n")
@@ -141,6 +181,11 @@ function Birdwatch:html_report_trace (trace, out)
    out:write("<details>\n")
    out:write("<summary>Bytecodes</summary>\n")
    self:html_report_bytecodes(trace:bytecodes(), out)
+   out:write("</details>\n")
+   -- Instructions
+   out:write("<details>\n")
+   out:write("<summary>Instructions</summary>\n")
+   self:html_report_instructions(trace:instructions(), out, trace.traceno)
    out:write("</details>\n")
    -- Events
    out:write("<details>\n")
@@ -269,6 +314,63 @@ function Birdwatch:html_report_bytecodes (bytecodes, out)
    out:write("</div>\n")
 end
 
+function Birdwatch:html_report_instructions (instructions, out, traceno)
+   out:write("<div class='scroll short'>\n")
+   out:write("<table>\n")
+   out:write("<thead>\n")
+   out:write("<tr>\n")
+   out:write("<th>#</th>\n")
+   out:write("<th>Sunk?</th>\n")
+   out:write("<th>Register/Slot</th>\n")
+   out:write("<th>Type</th>\n")
+   out:write("<th>Opcode</th>\n")
+   out:write("<th>Left</th>\n")
+   out:write("<th>Right</th>\n")
+   out:write("<th>Hint</th>\n")
+   out:write("</tr>\n")
+   out:write("</thead>\n")
+   out:write("<tbody>\n")
+   for i, ins in ipairs(instructions) do
+      out:write(("<tr id=ins-%d-%d>\n"):format(traceno, i))
+      out:write(("<td class=right><tt>%d</tt></td>\n"):format(i))
+      out:write(("<td>%s</td>\n"):format(ins.sunk and '>' or ''))
+      out:write(("<td><tt>%s</tt></td>\n"):format(ins.reg or ins.slot or ''))
+      out:write(("<td><small>%s</small></td>\n"):format(ins.t))
+      out:write(("<td><tt><b>%s</b></tt></td>\n"):format(ins.opcode))
+      for _, op in ipairs{'op1', 'op2'} do
+         local val = ins[op]
+         if type(val) == 'number' then
+            out:write(("<td class=right>%s%s</td>\n")
+               :format(val < 0 and '-' or '+', val))
+         elseif type(val) == 'cdata' then
+            out:write(("<td class=right><abbr title=%s>0x%x</abbr></td>\n")
+               :format(tostring(val):gsub("ULL", ""), val))
+         elseif type(val) == 'string' then
+            if val:match("^%[(%d+)%]$") then
+               local ref = tonumber(val:match("%[(%d+)%]"))
+               out:write(("<td class=right><tt><a href=#ins-%d-%d>%d</a></tt></td>\n")
+                  :format(traceno, ref, ref))
+            elseif val:match("^#%d+$") then
+                  out:write(("<td class=right><tt>%s</tt></td>\n"):format(val))
+            elseif val:match("^<[^>]+>$") then
+               local tag, more = val:match("<([a-z]+) ?([^>]*)>")
+               out:write(("<td><abbr title='%s'>%s</abbr></td>\n")
+                  :format(more, tag))
+            else
+               out:write(("<td>%s</td>\n"):format(val))
+            end
+         else
+            out:write("<td></td>\n")
+         end
+      end
+      out:write(("<td><small><em>%s</em></small></td>\n"):format(ins.hint))
+      out:write("</tr>\n")
+   end
+   out:write("</tbody>\n")
+   out:write("</table>\n")
+   out:write("</div>\n")
+end
+
 function Birdwatch:html_report_style (out)
    out:write([[<style>
       //body { display: flex; align-items: flex-start; }
@@ -278,8 +380,11 @@ function Birdwatch:html_report_style (out)
       summary { cursor: pointer; font-weight: bold; font-size: smaller; }
       details > *:nth-child(2) { margin-top: 0.5em; }
 
+      abbr:hover { cursor: pointer; }
+
       summary:hover { color: #0d51bf; }
       *[focus] { box-shadow: 0 0 0.5em #0d51bf; }
+      tr[focus] { box-shadow: none; background: #0d51bf30 !important; }
 
       summary.final-abort { color: red; }
 
@@ -302,6 +407,7 @@ end
 function Birdwatch:html_report_script (out)
   out:write([[<script>
      var current_focus = false
+     var current_hover = false
      function expand_details (element) {
        if (element.tagName == 'DETAILS')
          element.setAttribute('open', '')
@@ -318,10 +424,20 @@ function Birdwatch:html_report_script (out)
        current_focus.setAttribute('focus', '')
        event.preventDefault()
        dest.scrollIntoView({block: 'center'})
+       history.pushState({}, href, href)
      }
+     function highlight_on_href (event) {
+      var href = event.target.getAttribute('href')
+      var dest = document.querySelector(href)
+      if (current_hover && !(current_hover === current_focus))
+        current_hover.removeAttribute('focus')
+      current_hover = dest
+      current_hover.setAttribute('focus', '')
+    }
      document.querySelectorAll("a").forEach(a => {
        if (a.getAttribute('href'))
          a.addEventListener('click', expand_on_href)
+         a.addEventListener('mouseover', highlight_on_href)
      })
 </script>]])
 end

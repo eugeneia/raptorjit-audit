@@ -210,6 +210,9 @@ function IR:resolve_ref (ref, ref_bias, k)
    elseif k then
       -- Reference constant in k, resolve (possibly via future)
       local ik = ref_bias-ref
+      if ik == 0 then
+         return '<base>'
+      end
       if type(k[ik].op1) ~= 'function' then
          return k[ik].op1
       else
@@ -224,7 +227,7 @@ end
 
 function IR:const64 (t, ins, trace)
    if t == 'num' then
-      return ("%x"):format(tonumber(ins.tv.u64)) -- XXX pointer to TValue?
+      return tonumber(ins.tv.n)
    elseif t == 'intp' then
       return ins.tv.u64
    elseif t == 'str' then
