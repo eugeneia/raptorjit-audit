@@ -283,7 +283,7 @@ function Birdwatch:html_report_events (out)
    end
    out:write("</tbody>\n")
    out:write("</table>\n")
-   out:write("</>\n")
+   out:write("</div>\n")
    out:write("</details>\n")
 end
 
@@ -458,44 +458,44 @@ function Birdwatch:html_report_style (out)
    out:write([[<style>
       //body { display: flex; align-items: flex-start; }
       details { margin: 0.25em; padding: 0.25em; padding-left: 1em;
-                border-radius: 0.25em; border: thin solid #ccc;
+                border-radius: 0.25em; border: thin solid #d4d4d4;
                 background: white; overflow: auto; }
       summary { cursor: pointer; font-weight: bold; font-size: smaller; }
       details > *:nth-child(2) { margin-top: 0.5em; }
 
       abbr:hover { cursor: pointer; }
 
-      summary:hover { color: #0d51bf; }
-      *[focus] { box-shadow: 0 0 0.5em #0d51bf; }
-      tr[focus] { box-shadow: none; background: #0d51bf30 !important; }
+      summary:hover { color: #0d52bf; }
+      *[focus] { box-shadow: 0 0 0.5em #0d52bf; }
+      tr[focus] { box-shadow: none; background: #0d52bf30 !important; }
 
       summary.final-abort { color: red; }
 
       table { border-collapse: collapse; }
-      th { font-size: smaller; color: #333; background: #f4f4f4; }
+      th { font-size: smaller; color: #333; background: #fafafa; }
       td, th { padding: 0.4em 0.5em; }
       thead { position: sticky; top: 0; }
-      tbody > tr:nth-of-type(even) { background: #f4f4f4; }
+      tbody > tr:nth-of-type(even) { background: #fafafa; }
       td.right { text-align: right; }
 
       pre { padding-top: 0.25em; }
 
       .scroll { overflow: auto; max-height: 60vh;
-                border-top: thin solid #ccc; }
+                border-top: thin solid #d4d4d4; }
       .short { max-height: 30vh; }
 
-      span.irflags { border: solid thin #777; border-radius: 1em;
+      span.irflags { border: solid thin #7e8087; border-radius: 1em;
                      padding: 0 0.3em; font-size: small;
-                     color: #333; background: #ffe995; }
-      span.irfunc  { border: solid thin #777; border-radius: 1em;
+                     background: #ffe16b; }
+      span.irfunc  { border: solid thin #7e8087; border-radius: 1em;
                      padding: 0 0.3em; font-size: small;
-                     color: #333; background: #e2deff; }
-      span.irctype { border: solid thin #777; border-radius: 1em;
+                     background: #e4c6fa; }
+      span.irctype { border: solid thin #7e8087; border-radius: 1em;
                      padding: 0 0.3em; font-size: small;
-                     color: #333; background: #ebf4ff; }
-      span.irnyi   { border: solid thin #777; border-radius: 1em;
+                     background: #89ffdd; }
+      span.irnyi   { border: solid thin #7e8087; border-radius: 1em;
                      padding: 0 0.3em; font-size: small;
-                     color: #333; background: #ebebeb; }
+                     background: #fafafa; }
 
       .irop-Barrier { color: #a10705; }
       .irop-Load, .irop-Memref { color: #0d52bf; }
@@ -512,7 +512,7 @@ function Birdwatch:html_report_style (out)
       .snapshot-stack { width: 30px; margin: 2px; }
       .snapshot-stack[minute] { width: 60px; }
       .snapshot-stack[hour] { width: 120px; }
-      .profile-snapshots { /*width: 70px;*/ display: flex; overflow: auto; }
+      .profile-snapshots { display: flex; overflow: auto; }
   
       .snapshot { display: none; }
 
@@ -576,7 +576,7 @@ function Birdwatch:html_report_script (out)
              h += fmix32(str.charCodeAt(i))
              h %= 2**32
          }
-         return "hsl(" + (h % 256) + " 90% 60%)"
+         return "hsl(" + (h % 256) + " 94% 61%)"
      }
      // Murmur3 fmix32
      function fmix32 (h) {
