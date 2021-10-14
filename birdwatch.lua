@@ -407,42 +407,34 @@ function Birdwatch:html_report_instructions (instructions, out, traceno)
       out:write(("<td class=irop-%s><tt><b>%s</b></tt></td>\n")
          :format(iropclass(ins.opcode), ins.opcode))
       for _, op in ipairs{'op1', 'op2'} do
-         local val = ins[op]
-         if type(val) == 'number' then
-            out:write(("<td class=right>%s%s</td>\n")
-               :format(val < 0 and '-' or '+', val))
-         elseif type(val) == 'cdata' then
-            out:write(("<td class=right><abbr title=%s>0x%x</abbr></td>\n")
-               :format(tostring(val):gsub("ULL", ""), val))
-         elseif type(val) == 'string' then
-            if val:match("^%[(%d+)%]$") then
-               local ref = tonumber(val:match("%[(%d+)%]"))
-               out:write(("<td class=right><tt><a href=#ins-%d-%d>%d</a></tt></td>\n")
-                  :format(traceno, ref, ref))
-            elseif val:match("^#%d+$") then
-               out:write(("<td class=right><tt>%s</tt></td>\n"):format(val))
-            elseif val:match("^<flags[^>]+>$") then
-               local flags = val:match("<flags ?([^>]*)>")
-               out:write(("<td><span class=irflags>%s</span></td>\n")
-                  :format(flags))
-            elseif val:match("^<func[^>]+>$") then
-               local func = val:match("<func ?([^>]*)>")
-               local short = func:match(":([^:]+)$") or "func"
-               out:write(("<td><span class=irfunc><abbr title='%s'>%s</abbr></span></td>\n")
-                  :format(func, short))
-            elseif val:match("^<ctype[^>]+>$") then
-               local ctype = val:match("<ctype ?([^>]*)>")
-               out:write(("<td><span class=irctype>%s</span></td>\n")
-                  :format(ctype))
-            elseif val:match("^<[^>]+>$") then
-               local tag, more = val:match("<([a-z]+) ?([^>]*)>")
-               out:write(("<td><span class=irnyi><abbr title='%s'>%s</abbr></span></td>\n")
-                  :format(more, tag))
-            else
-               out:write(("<td><small>\"%s\"</small></td>\n"):format(val))
-            end
-         else
+         local arg = ins[op]
+         if not arg then
             out:write("<td></td>\n")
+         elseif arg.t == 'num' or arg.t == 'lit' or arg.t == 'cst' then
+            out:write(("<td class=right>%s</td>\n"):format(arg))
+         elseif arg.t == 'intp' then
+            out:write(("<td class=right><abbr title=%s>%s</abbr></td>\n")
+               :format(tostring(arg.val):gsub("ULL", ""), arg))
+         elseif arg.t == 'str' then
+            out:write(("<td><small>%s</small></td>\n"):format(arg))
+         elseif arg.t == 'ref' then
+            out:write(("<td class=right><tt><a href=#ins-%d-%d>%d</a></tt></td>\n")
+               :format(traceno, arg.val, arg.val))
+         elseif arg.t == 'slot' then
+            out:write(("<td class=right><tt>%s</tt></td>\n"):format(arg))
+         elseif arg.t == 'flags' then
+            out:write(("<td><span class=irflags>%s</span></td>\n")
+               :format(arg))
+         elseif arg.t == 'func' then
+            local short = tostring(arg.val):match(":([^:]+)$") or "func"
+            out:write(("<td><span class=irfunc><abbr title='%s'>%s</abbr></span></td>\n")
+               :format(arg, short))
+         elseif arg.t == 'ctype' then
+            out:write(("<td><span class=irctype>%s</span></td>\n")
+               :format(arg))
+         else
+            out:write(("<td><span class=irnyi>%s</span></td>\n")
+               :format(arg.t))
          end
       end
       out:write(("<td><small><em>%s</em></small></td>\n"):format(ins.hint))

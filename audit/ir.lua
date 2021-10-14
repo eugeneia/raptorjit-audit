@@ -3,7 +3,7 @@ local band, lshift, rshift = bit.band, bit.lshift, bit.rshift
 
 -- LuaJIT IR
 
-local IR = {}
+local IR, Arg = {}, {}
 
 local Opcodes = {
    lt = 'LT (left, right): left < right (signed)',
@@ -199,21 +199,21 @@ function IR:operand (ins, o, m, trace, k)
    if m == 'ref' then
       return self:resolve_ref(o, trace.ref_bias, k)
    elseif m == 'lit' then
-      return o
+      return Arg:new('lit', o)
    elseif m == 'cst' then
-      return ins.i
+      return Arg:new('cst', ins.i)
    end
 end
 
 function IR:resolve_ref (ref, ref_bias, k)
    if ref > ref_bias then
       -- Reference prior IR instruction
-      return ("[%d]"):format(ref-ref_bias)
+      return Arg:new('ref', ref-ref_bias)
    elseif k then
       -- Reference constant in k, resolve (possibly via future)
       local ik = ref_bias-ref
       if ik == 0 then
-         return '<base>'
+         return Arg:new('base')
       end
       if type(k[ik].op1) ~= 'function' then
          return k[ik].op1
@@ -229,12 +229,12 @@ end
 
 function IR:const64 (t, ins, trace)
    if t == 'num' then
-      return tonumber(ins.tv.n)
+      return Arg:new('num', tonumber(ins.tv.n))
    elseif t == 'intp' then
-      return ins.tv.u64
+      return Arg:new('intp', ins.tv.u64)
    elseif t == 'str' then
       local str = assert(trace.auditlog.memory[ins.gcr])
-      return trace.auditlog:lj_strdata(str)
+      return Arg:new('str', trace.auditlog:lj_strdata(str))
    elseif t == 'func' then
       local func_addr = ffi.cast("uintptr_t", ins.gcr)
       local func = assert(trace.auditlog.memory[ins.gcr])
@@ -244,43 +244,43 @@ function IR:const64 (t, ins, trace)
          ffi.cast("uintptr_t", func.l.pc) - ffi.sizeof(gcproto_t)
       local proto = trace.auditlog.prototypes[proto_addr]
       if proto then
-         return ("<func %s>"):format(proto)
+         return Arg:new('func', proto)
       else
-         return ("<func #%x>"):format(tonumber(func_addr))
+         return Arg:new('func', ("#%x"):format(func_addr))
       end
    else
       -- XXX - NYI
-      return '<'..t..'>'
+      return Arg:new(t)
    end
 end
 
-function IR:fpmath (ret) ret.op2 = ("#%d"):format(ret.op2) end
-function IR:urefo (ret) ret.op2 = ("#%d"):format(ret.op2) end
-function IR:urefc (ret) ret.op2 = ("#%d"):format(ret.op2) end
-function IR:fref (ret) ret.op2 = ("#%d"):format(ret.op2) end
-function IR:fload (ret) ret.op2 = ("#%d"):format(ret.op2) end
-function IR:calln (ret) ret.op2 = ("#%d"):format(ret.op2) end
-function IR:calll (ret) ret.op2 = ("#%d"):format(ret.op2) end
-function IR:calls (ret) ret.op2 = ("#%d"):format(ret.op2) end
+function IR:fpmath (ret) ret.op2 = Arg:new('slot', ret.op2.val) end
+function IR:urefo (ret) ret.op2 = Arg:new('slot', ret.op2.val) end
+function IR:urefc (ret) ret.op2 = Arg:new('slot', ret.op2.val) end
+function IR:fref (ret) ret.op2 = Arg:new('slot', ret.op2.val) end
+function IR:fload (ret) ret.op2 = Arg:new('slot', ret.op2.val) end
+function IR:calln (ret) ret.op2 = Arg:new('slot', ret.op2.val) end
+function IR:calll (ret) ret.op2 = Arg:new('slot', ret.op2.val) end
+function IR:calls (ret) ret.op2 = Arg:new('slot', ret.op2.val) end
 function IR:base (ret)
-   ret.op1 = ("#%d"):format(ret.op1)
-   ret.op2 = ("#%d"):format(ret.op2)
+   ret.op1 = Arg:new('slot', ret.op1.val)
+   ret.op2 = Arg:new('slot', ret.op2.val)
 end
-function IR:pval (ret) ret.op1 = ("#%d"):format(ret.op1) end
-function IR:rename (ret) ret.op2 = ("#%d"):format(ret.op2) end
+function IR:pval (ret) ret.op1 = Arg:new('slot', ret.op1.val) end
+function IR:rename (ret) ret.op2 = Arg:new('slot', ret.op2.val) end
 
 function IR:cnew (ret, trace)
-   local desc = trace.auditlog.ctypes[ret.op1]
+   local desc = trace.auditlog.ctypes[ret.op1.val]
    if desc then
-      ret.op1 = ("<ctype %s>"):format(desc)
+      ret.op1 = Arg:new('ctype', desc)
    else
-      ret.op1 = ("<ctype #%d>"):format(ret.op1)
+      ret.op1 = Arg:new('ctype', ("#%d"):format(ret.op1.val))
    end
 end
 IR.cnewi = IR.cnew
 
 function IR:sload (ret)
-   ret.op1 = ("#%d"):format(ret.op1)
+   ret.op1 = Arg:new('slot', ret.op1.val)
    local flags = {
       [0x01] = "parent",
       [0x02] = "frame",
@@ -289,7 +289,7 @@ function IR:sload (ret)
       [0x10] = "readonly",
       [0x20] = "inherit"
    }
-   ret.op2 = self:flags(ret.op2, flags)
+   ret.op2 = self:flags(ret.op2.val, flags)
 end
 
 function IR:xload (ret)
@@ -298,35 +298,34 @@ function IR:xload (ret)
       [0x02] = "volatile",
       [0x04] = "unaligned"
    }
-   ret.op2 = self:flags(ret.op2, flags)
+   ret.op2 = self:flags(ret.op2.val, flags)
 end
 
 function IR:conv (ret, trace)
-   local flags = ("<flags %s→%s")
-      :format(self:typename(trace, band(0x1f, ret.op2)),
-              self:typename(trace, band(0x1f, rshift(ret.op2, 5))))
-   if band(0x0800, ret.op2) ~= 0 then
-      flags = flags.." sign-extend"
+   local fl = {("%s→%s"):format(
+      self:typename(trace, band(0x1f, ret.op2.val)),
+      self:typename(trace, band(0x1f, rshift(ret.op2.val, 5)))
+   )}
+   if band(0x0800, ret.op2.val) ~= 0 then
+      fl[#fl+1] = "sign-extend"
    end
    local numtoint_mode =
-      ({"any", "index", "check"})[band(0xf, lshift(ret.op2, 12))]
+      ({"any", "index", "check"})[band(0xf, lshift(ret.op2.val, 12))]
    if numtoint_mode then
-      flags = flags.." "..numtoint_mode
+      fl[#fl+1] = numtoint_mode
    end
-   ret.op2 = flags..">"
+   ret.op2 = Arg:new('flags', fl)
 end
 
 function IR:flags (x, flags)
-   local has_flags = false
-   local s = "<flags"
+   local fl = {}
    for mask, flag in pairs(flags) do
       if band(mask, x) ~= 0 then
-         s = s.." "..flag
-         has_flags = true
+         fl[#fl+1] = flag
       end
    end
-   if has_flags then
-      return s..">"
+   if #fl > 0 then
+      return Arg:new('flags', fl)
    end
 end
 
@@ -343,6 +342,40 @@ IR.reg_x64 = {
    "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7", "xmm8",
    "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15"
 }
+
+function Arg:new (t, val)
+   return setmetatable({t=t, val=val},
+                       {__index=Arg, __tostring=Arg.__tostring})
+end
+
+function Arg:__tostring ()
+   if self.t == 'ref' then
+      return ("[%d]"):format(self.val)
+   elseif self.t == 'slot' then
+      return ("#%d"):format(self.val)
+   elseif self.t == 'lit' or self.t == 'cst' then
+      return ("%s%d"):format(self.val < 0 and '-' or '+', self.val)
+   elseif self.t == 'num' then
+      return tostring(self.val)
+   elseif self.t == 'intp' then
+      return ("0x%x"):format(self.val)
+   elseif self.t == 'str' then
+      return ("%q"):format(self.val)
+   elseif self.t == 'func' then
+      return ("%s"):format(self.val)
+   elseif self.t == 'ctype' then
+      return ("%s"):format(self.val)
+   elseif self.t == 'flags' then
+      local s = ""
+      for i, flag in ipairs(self.val) do
+         s = s..flag
+         if i < #self.val then s = s..", " end
+      end
+      return s
+   else
+      return ("<%s>"):format(self.t)
+   end
+end
 
 -- Module ir
 
