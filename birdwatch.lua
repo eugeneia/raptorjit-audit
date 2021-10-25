@@ -4,6 +4,25 @@ local IR = require("audit.ir")
 
 local Birdwatch = {}
 
+function Birdwatch:system_report (out)
+   out = out or io.stdin
+   local shmpath = os.getenv("SNABB_SHMPATH") or "/var/run/snabb"
+   local snappath = os.getenv("SNABB_SNAPSHOTS") or "~/birdwatch-snapshots"
+   local processes = assert("XXX")
+   for name, auditlog in pairs(processes) do
+      local profiles = assert("XXX")
+      self:new{
+         name = name,
+         auditlog = auditlog,
+         profiles = profiles
+      }:html_report(out)
+   end
+end
+
+function Birdwatch:html_report_encoding (out)
+   out:write("<meta charset='utf-8'>\n")
+end
+
 function Birdwatch:new (arg)
    local self = setmetatable({}, {__index=Birdwatch})
    self.name = arg.name
@@ -15,7 +34,7 @@ function Birdwatch:new (arg)
 end
 
 function Birdwatch:html_report (out)
-   out:write("<meta charset='utf-8'>\n")
+   self:html_report_encoding(out)
    self:html_report_style(out)
    self:html_report_profile_snapshots(out)
    self:html_report_traces(out)
