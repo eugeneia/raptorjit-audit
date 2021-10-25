@@ -464,10 +464,10 @@ function Birdwatch:html_report_style (out)
       summary.final-abort { color: red; }
 
       table { border-collapse: collapse; }
-      th { font-size: smaller; color: #333; background: #fafafa; }
+      th { font-size: smaller; color: #333; background: #f4f4f4; }
       td, th { padding: 0.4em 0.5em; }
       thead { position: sticky; top: 0; }
-      tbody > tr:nth-of-type(even) { background: #fafafa; }
+      tbody > tr:nth-of-type(even) { background: #f4f4f4; }
       td.right { text-align: right; }
 
       pre { padding-top: 0.25em; }
@@ -501,9 +501,11 @@ function Birdwatch:html_report_style (out)
       .portion { width: 100%; cursor: pointer; border: thin solid white; }
       .portion:first-child { border-radius: 0.5em 0.5em 0 0; }
       .portion:last-child { border-radius: 0 0 0.5em 0.5em; }
-      .snapshot-stack { width: 30px; margin: 2px; }
+      .snapshot-stack { width: 30px; margin: 2px; border-radius: 0.5em; }
       .snapshot-stack[minute] { width: 60px; }
       .snapshot-stack[hour] { width: 120px; }
+      .snapshot-stack[active] { border-bottom: medium solid #64baff;
+                                border-left: medium solid #64baff; }
       .profile-snapshots { display: flex; overflow: auto; }
   
       .snapshot { display: none; }
@@ -548,11 +550,16 @@ function Birdwatch:html_report_script (out)
      })
 
      var openTab = false
+     var activeStack = false
      function openProfilesTabForSnapshot (stack) {
          if (openTab)
              openTab.style = "display: none;"
          while (stack && !stack.getAttribute("snapshot"))
              stack = stack.parentNode
+         if (activeStack)
+            activeStack.removeAttribute('active')
+         stack.setAttribute('active', '')
+         activeStack = stack
          let snapshot = stack.getAttribute("snapshot")
          let tab = document.querySelector('#' + snapshot)
          tab.style = "display: block;"
