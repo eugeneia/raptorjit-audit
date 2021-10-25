@@ -538,10 +538,11 @@ function DIE:build_ctype ()
       self.dwarf.ctype_cache[self] = t
       return t
    elseif self.tag == 'enumeration_type' then
+      local id = tostring(self):match("table: 0x([0-9a-f]+)")
       local t = "enum {\n"
       for _, member in ipairs(self.children) do
          assert(member.tag == 'enumerator')
-         local name = assert(member.values.name)
+         local name = ("__dwarf_%s_%s"):format(id, assert(member.values.name))
          local value = assert(member.values.const_value)
          t = t..("%s=%d,\n"):format(name, value)
       end
