@@ -1,22 +1,32 @@
+#!/usr/bin/env luajit
+
 local audit = require("audit")
 local vmprofile = require("audit.vmprofile")
 local IR = require("audit.ir")
 
 local Birdwatch = {}
 
-function Birdwatch:system_report (out)
-   out = out or io.stdin
-   local shmpath = os.getenv("SNABB_SHMPATH") or "/var/run/snabb"
-   local snappath = os.getenv("SNABB_SNAPSHOTS") or "~/birdwatch-snapshots"
-   local processes = assert("XXX")
-   for name, auditlog in pairs(processes) do
-      local profiles = assert("XXX")
-      self:new{
-         name = name,
-         auditlog = auditlog,
-         profiles = profiles
-      }:html_report(out)
+function Birdwatch:html_report_processes (processes, out)
+   self:html_report_encoding(out)
+   self:html_report_style(out)
+   local by_name = {}
+   for name in pairs(processes) do
+      by_name[#by_name+1] = name
    end
+   table.sort(by_name)
+   for _, name in ipairs(by_name) do
+      io.stderr:write(("Process %s, %d profiles\n"):format(processes[name].auditlog, #processes[name].profiles))
+      out:write("<details>\n")
+      out:write(("<summary>%s</summary>\n"):format(name))
+      local bird = self:new{
+         name = name,
+         auditlog = processes[name].auditlog,
+         profiles = processes[name].profiles
+      }
+      bird:html_report(out)
+      out:write("</details>\n")
+   end
+   self:html_report_script(out)
 end
 
 function Birdwatch:html_report_encoding (out)
@@ -28,18 +38,23 @@ function Birdwatch:new (arg)
    self.name = arg.name
    self.auditlog = audit:new(arg.auditlog)
    for _, profile in ipairs(arg.profiles) do
-      self.auditlog:add_profile(profile)
+      local timestamp = tonumber(profile:match("%.([%d]+)$"))
+      self.auditlog:add_profile(profile, timestamp)
    end
    return self
 end
 
-function Birdwatch:html_report (out)
-   self:html_report_encoding(out)
-   self:html_report_style(out)
+function Birdwatch:html_report (out, standalone)
+   if standalone then
+      self:html_report_encoding(out)
+      self:html_report_style(out)
+   end
    self:html_report_profile_snapshots(out)
    self:html_report_traces(out)
    self:html_report_events(out)
-   self:html_report_script(out)
+   if standalone then
+      self:html_report_script(out)
+   end
 end
 
 local function percent (n, total) return n/total*100 end
@@ -258,12 +273,12 @@ function Birdwatch:html_report_trace (trace, out)
    -- Bytecodes
    out:write("<details>\n")
    out:write("<summary>Bytecodes</summary>\n")
-   self:html_report_bytecodes(trace:bytecodes(), out)
+   --self:html_report_bytecodes(trace:bytecodes(), out)
    out:write("</details>\n")
    -- Instructions
    out:write("<details>\n")
    out:write("<summary>Instructions</summary>\n")
-   self:html_report_instructions(trace:instructions(), out, trace.traceno)
+   --self:html_report_instructions(trace:instructions(), out, trace.traceno)
    out:write("</details>\n")
    -- Events
    out:write("<details>\n")
@@ -329,7 +344,7 @@ function Birdwatch:html_report_event (event, out)
       -- Bytecodes
       out:write("<details>\n")
       out:write("<summary>Bytecode log</summary>\n")
-      self:html_report_bytecodes(event.trace_abort:bytecodes(), out)
+      --self:html_report_bytecodes(event.trace_abort:bytecodes(), out)
       out:write("</details>\n")
    end
    out:write("</details>\n")
@@ -611,14 +626,40 @@ function Birdwatch:html_report_script (out)
 </script>]])
 end
 
-function Birdwatch:socket_activate (stdin, stdout)
+function Birdwatch.socket_activate (shmpath, snappath)
    -- HTTP/1.1 sorta
-   local request = stdin:read("l")
+   local request = io.stdin:read("l")
    assert(get:match("^GET"), "Not a GET request")
-   stdout:write("HTTP/1.1 200 OK\r\n")
-   stdout:write("Content-Type: text/html\r\n")
-   stdout:write("\r\n")
-   self:html_report(stdout)
+   io.stdout:write("HTTP/1.1 200 OK\r\n")
+   io.stdout:write("Content-Type: text/html\r\n")
+   io.stdout:write("\r\n")
+   Birdwatch.system_report(io.stdout)
+end
+
+function Birdwatch.system_report (shmpath, snappath, out)
+   out = out or io.stdout
+   local processes = {}
+   local find_auditlog =
+      ("find '%s' -name 'audit.log' 2>/dev/null"):format(shmpath)
+   for auditlog in readcmd(find_auditlog, "*a"):gmatch("([^\n]+)\n") do
+      local dir = dirname(auditlog)
+      local snapdir = dir:gsub(shmpath, snappath, 1)
+      local name = basename(dir)
+      local profiles = {}
+      local find_vmprofile =
+         ("find '%s' -name '*.vmprofile' 2>/dev/null"):format(dir)
+      for path in readcmd(find_vmprofile, "*a"):gmatch("([^\n]+)\n") do
+         profiles[#profiles+1] = path
+      end
+      local find_snap =
+         ("find '%s' -name '*.vmprofile.*' 2>/dev/null"):format(snapdir)
+      for path in readcmd(find_snap, "*a"):gmatch("([^\n]+)\n") do
+         profiles[#profiles+1] = path
+      end
+      processes[name] = {auditlog=auditlog, profiles=profiles}
+      io.stderr:write(("Collected %s\n"):format(name))
+   end
+   Birdwatch:html_report_processes(processes, out)
 end
 
 function Birdwatch.snapshot (shmpath, snappath, keep_for)
@@ -646,7 +687,7 @@ function Birdwatch.snapshot (shmpath, snappath, keep_for)
    keep_for = keep_for or 60*60
    local keep_from = os.time() - keep_for
    for path in readcmd(find_snap, "*a"):gmatch("([^\n]+)\n") do
-      local timestamp = tonumber(path:match("([%d]+)$"))
+      local timestamp = tonumber(path:match("%.([%d]+)$"))
       if timestamp < keep_from then
          print("unlink", path)
          unlink(path)
@@ -687,16 +728,32 @@ function unlink (path)
    assert(os.execute(("rm -rf '%s'"):format(path)))
 end
 
-Birdwatch.snapshot("test/runsnabb", "test/snap", 10)
+local shmpath = os.getenv("SNABB_SHMPATH") or "/var/run/snabb"
+local snappath = os.getenv("SNABB_SNAPSHOTS") or os.getenv("HOME").."/birdwatch-snapshots"
 
-B = Birdwatch:new{
-   auditlog = "test/snabb-basic1/audit.log",
-   profiles = {"test/snabb-basic1/vmprofile/apps.basic.basic_apps.vmprofile",
-               "test/snabb-basic1/vmprofile/engine.vmprofile",
-               "test/snabb-basic1/vmprofile/program.vmprofile"}
-}
+if arg[1] == 'snap' then
+   Birdwatch.snapshot(shmpath, snappath)
+elseif arg[1] == 'report' then
+   Birdwatch.system_report(shmpath, snappath)
+elseif arg[1] == 'socket-activate' then
+   Birdwatch.socket_activate(shmpath, snappath)
+else
+   print("Usage: birdwatch snap|report|socket-activate")
+   print("SNABB_SHMPATH", "?=", shmpath)
+   print("SNABB_SNAPSHOTS","?=", snappath)
+   os.exit(1)
+end
 
-local f = assert(io.open("out.html", "w"))
-B:html_report(f)
-assert(f:write("\n"))
-f:close()
+-- Birdwatch.snapshot("test/runsnabb", "test/snap", 10)
+
+-- B = Birdwatch:new{
+--    auditlog = "test/snabb-basic1/audit.log",
+--    profiles = {"test/snabb-basic1/vmprofile/apps.basic.basic_apps.vmprofile",
+--                "test/snabb-basic1/vmprofile/engine.vmprofile",
+--                "test/snabb-basic1/vmprofile/program.vmprofile"}
+-- }
+
+-- local f = assert(io.open("out.html", "w"))
+-- B:html_report(f, 'standalone')
+-- assert(f:write("\n"))
+-- f:close()
