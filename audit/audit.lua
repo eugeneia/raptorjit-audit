@@ -433,9 +433,8 @@ function Auditlog:add_profile (path, timestamp)
    }
    self.latest_snapshot = math.max(self.latest_snapshot, snapshot.timestamp)
    if snapshots then
-      assert(snapshots[#snapshots].timestamp <= snapshot.timestamp,
-             "Auditlog already has a later profile for: "..name)
       snapshots[#snapshots+1] = snapshot
+      table.sort(snapshots, function (x, y) return x.timestamp < y.timestamp end)
    else
       self.profiles[name] = {snapshot}
    end
