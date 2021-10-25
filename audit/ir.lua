@@ -246,7 +246,7 @@ function IR:const64 (t, ins, trace)
       if proto then
          return Arg:new('func', proto)
       else
-         return Arg:new('func', ("#%x"):format(func_addr))
+         return Arg:new('func', ("#%s"):format(bit.tohex(func_addr)))
       end
    else
       -- XXX - NYI
@@ -358,7 +358,7 @@ function Arg:__tostring ()
    elseif self.t == 'num' then
       return tostring(self.val)
    elseif self.t == 'intp' then
-      return ("0x%x"):format(self.val)
+      return ("0x%s"):format(bit.tohex(self.val))
    elseif self.t == 'str' then
       return ("%q"):format(self.val)
    elseif self.t == 'func' then
