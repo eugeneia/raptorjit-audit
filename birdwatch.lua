@@ -14,18 +14,49 @@ function Birdwatch:html_report_processes (processes, out)
       by_name[#by_name+1] = name
    end
    table.sort(by_name)
+   out:write("<h1>Processes</h1>\n")
+   out:write("<table>\n")
+   out:write("<thead>\n")
+   out:write("<tr>\n")
+   out:write("<th>PID</th>\n")
+   out:write("<th>Info</th>\n")
+   out:write("</tr>\n")
+   out:write("</thead>\n")
+   out:write("<tbody>\n")
    for _, name in ipairs(by_name) do
-      io.stderr:write(("Process %s, %d profiles\n"):format(processes[name].auditlog, #processes[name].profiles))
-      out:write("<details>\n")
-      out:write(("<summary>%s</summary>\n"):format(name))
-      local bird = self:new{
-         name = name,
-         auditlog = processes[name].auditlog,
-         profiles = processes[name].profiles
-      }
-      bird:html_report(out)
-      out:write("</details>\n")
+      out:write("<tr>\n")
+      out:write(("<td class=right><a href='/%s'>%s</a></td>\n")
+         :format(name, name))
+      out:write(("<td>%s</td>\n"):format(processes[name].info))
+      out:write("</tr>\n")
    end
+   out:write("</tbody>\n")
+   out:write("</table>\n")
+   self:html_report_script(out)
+end
+
+function Birdwatch:html_report_process (process, out)
+   out:write(("<h1>%s (%s)</h1>\n"):format(process.info, process.name))
+   local bird = self:new(process)
+   bird:html_report(out)
+end
+
+function Birdwatch:html_report_trace_full (process, traceno, out)
+   self:html_report_encoding(out)
+   self:html_report_style(out)
+   local bird = self:new(process)
+   local trace = assert(bird.auditlog.traces[traceno])
+   out:write(("<h1>%s</h1>\n"):format(trace))
+   bird:html_report_trace(trace, out, 'full')
+   self:html_report_script(out)
+end
+
+function Birdwatch:html_report_event_full (process, id, out)
+   self:html_report_encoding(out)
+   self:html_report_style(out)
+   local bird = self:new(process)
+   local event = assert(bird.auditlog.events[id])
+   bird:html_report_event(event, out, 'full')
    self:html_report_script(out)
 end
 
@@ -44,17 +75,13 @@ function Birdwatch:new (arg)
    return self
 end
 
-function Birdwatch:html_report (out, standalone)
-   if standalone then
-      self:html_report_encoding(out)
-      self:html_report_style(out)
-   end
+function Birdwatch:html_report (out)
+   self:html_report_encoding(out)
+   self:html_report_style(out)
    self:html_report_profile_snapshots(out)
    self:html_report_traces(out)
    self:html_report_events(out)
-   if standalone then
-      self:html_report_script(out)
-   end
+   self:html_report_script(out)
 end
 
 local function percent (n, total) return n/total*100 end
@@ -224,7 +251,7 @@ function Birdwatch:html_report_traces (out)
    out:write("</details>\n")
 end
 
-function Birdwatch:html_report_trace (trace, out)
+function Birdwatch:html_report_trace (trace, out, full)
    -- Relations
    out:write("<details>\n")
    out:write("<summary>Relations</summary>\n")
@@ -254,8 +281,13 @@ function Birdwatch:html_report_trace (trace, out)
    local children = trace:children()
    for _, child in ipairs(children) do
       out:write("<tr>\n")
-      out:write(("<td><a href=#trace-%d>%s</a></td>\n")
-         :format(child.traceno, child))
+      if full then
+         out:write(("<td><a href='/%s/trace/%d'>%s</a></td>\n")
+            :format(self.name, child.traceno, child))
+      else
+         out:write(("<td><a href=#trace-%d>%s</a></td>\n")
+            :format(child.traceno, child))
+      end
       out:write("</tr>\n")
    end
    if #children == 0 then
@@ -270,16 +302,18 @@ function Birdwatch:html_report_trace (trace, out)
    out:write("<summary>Function contour</summary>\n")
    self:html_report_contour(trace:contour(), out)
    out:write("</details>\n")
-   -- Bytecodes
-   out:write("<details>\n")
-   out:write("<summary>Bytecodes</summary>\n")
-   --self:html_report_bytecodes(trace:bytecodes(), out)
-   out:write("</details>\n")
-   -- Instructions
-   out:write("<details>\n")
-   out:write("<summary>Instructions</summary>\n")
-   --self:html_report_instructions(trace:instructions(), out, trace.traceno)
-   out:write("</details>\n")
+   if full then
+      -- Bytecodes
+      out:write("<details>\n")
+      out:write("<summary>Bytecodes</summary>\n")
+      self:html_report_bytecodes(trace:bytecodes(), out)
+      out:write("</details>\n")
+      -- Instructions
+      out:write("<details>\n")
+      out:write("<summary>Instructions</summary>\n")
+      self:html_report_instructions(trace:instructions(), out, trace.traceno)
+      out:write("</details>\n")
+   end
    -- Events
    out:write("<details>\n")
    out:write("<summary>Events</summary>\n")
@@ -289,13 +323,23 @@ function Birdwatch:html_report_trace (trace, out)
    for _, event in ipairs(trace:events()) do
       out:write("<tr>\n")
       out:write(("<td class=right>%.3fs</td>\n"):format(event:reltime()))
-      out:write(("<td><a href=#event-%d>%s</a></td>\n"):format(event.id, event))
+      if full then
+         out:write(("<td><a href='/%s/event/%d'>%s</a></td>\n")
+            :format(self.name, event.id, event))
+      else
+         out:write(("<td><a href=#event-%d>%s</a></td>\n")
+            :format(event.id, event))
+      end
       out:write("</tr>\n")
    end
    out:write("</tbody>\n")
    out:write("</table>\n")
    out:write("</div>\n")
    out:write("</details>\n")
+   if not full then
+      out:write(("<a class=details target=_blank href='/%s/trace/%d'>Details</a>")
+         :format(self.name, trace.traceno))
+   end
 end
 
 function Birdwatch:html_report_events (out)
@@ -321,12 +365,19 @@ function Birdwatch:html_report_events (out)
    out:write("</details>\n")
 end
 
-function Birdwatch:html_report_event (event, out)
-   out:write(("<details id=event-%d>\n"):format(event.id))
+function Birdwatch:html_report_event (event, out, full)
+   out:write(("<details %s id=event-%d>\n")
+      :format((full and "open") or "", event.id))
    if event.event == 'trace_stop' then
       out:write(("<summary>%s</summary>\n"):format(event))
-      out:write(("<p>Creation of <a href=#trace-%d>%s</a></p>\n")
-         :format(event.trace.traceno, event.trace))
+      local trace_href
+      if full then
+         trace_href = ("/%s/trace/%d"):format(self.name, event.trace.traceno)
+      else
+         trace_href = ("#trace-%d"):format(event.trace.traceno)
+      end
+      out:write(("<p>Creation of <a href='%s'>%s</a></p>\n")
+         :format(trace_href, event.trace))
    elseif event.event == 'trace_abort' then
       if event.trace_abort.jit_State.final ~= 0 then
          out:write(("<summary class=final-abort>%s</summary>\n"):format(event))
@@ -341,11 +392,17 @@ function Birdwatch:html_report_event (event, out)
       out:write("<summary>Contour</summary>\n")
       self:html_report_contour(event.trace_abort:contour(), out)
       out:write("</details>\n")
-      -- Bytecodes
-      out:write("<details>\n")
-      out:write("<summary>Bytecode log</summary>\n")
-      --self:html_report_bytecodes(event.trace_abort:bytecodes(), out)
-      out:write("</details>\n")
+      if full then
+         -- Bytecodes
+         out:write("<details>\n")
+         out:write("<summary>Bytecode log</summary>\n")
+         self:html_report_bytecodes(event.trace_abort:bytecodes(), out)
+         out:write("</details>\n")
+      end
+   end
+   if not full then
+      out:write(("<a class=details target=_blank href='/%s/event/%d'>Details</a>")
+         :format(self.name, event.id))
    end
    out:write("</details>\n")
 end
@@ -364,7 +421,7 @@ function Birdwatch:html_report_contour (contour, out)
 end
 
 function Birdwatch:html_report_bytecodes (bytecodes, out)
-   out:write("<div class='scroll short'>\n")
+   out:write("<div class='scroll'>\n")
    out:write("<table>\n")
    out:write("<thead>\n")
    out:write("<tr>\n")
@@ -416,7 +473,7 @@ function Birdwatch:html_report_instructions (instructions, out, traceno)
       end
       return 'Misc'
    end
-   out:write("<div class='scroll short'>\n")
+   out:write("<div class='scroll'>\n")
    out:write("<table>\n")
    out:write("<thead>\n")
    out:write("<tr>\n")
@@ -491,6 +548,11 @@ function Birdwatch:html_report_style (out)
 
       abbr:hover { cursor: pointer; }
 
+      h1 { font-size: large; }
+      a[target='_blank']::after {content: '🗗';}
+      a.details { text-decoration: none; font-size: smaller; font-weight: bold;
+                  display: block; margin-left: 0.25em; }
+
       summary:hover { color: #0d52bf; }
       *[focus] { box-shadow: 0 0 0.5em #0d52bf; }
       tr[focus] { box-shadow: none; background: #0d52bf30 !important; }
@@ -532,7 +594,7 @@ function Birdwatch:html_report_style (out)
       .irop-Alloc { background: #9bdb4d; }
       .irop-Call { color: #7239b3; }
 
-      .portion { width: 100%; cursor: pointer; border: thin solid white; }
+      .portion { width: 100%; cursor: pointer; }
       .portion:first-child { border-radius: 0.5em 0.5em 0 0; }
       .portion:last-child { border-radius: 0 0 0.5em 0.5em; }
       .snapshot-stack { width: 30px; margin: 2px; border-radius: 0.5em; }
@@ -629,14 +691,15 @@ end
 function Birdwatch.socket_activate (shmpath, snappath)
    -- HTTP/1.1 sorta
    local request = io.stdin:read("l")
-   assert(get:match("^GET"), "Not a GET request")
+   local path = request:match("^GET ([^ ]+) HTTP/1.1")
+   assert(path, "Not a GET request")
    io.stdout:write("HTTP/1.1 200 OK\r\n")
    io.stdout:write("Content-Type: text/html\r\n")
    io.stdout:write("\r\n")
-   Birdwatch.system_report(io.stdout)
+   Birdwatch.system_report(path, shmpath, snappath, io.stdout)
 end
 
-function Birdwatch.system_report (shmpath, snappath, out)
+function Birdwatch.system_report (path, shmpath, snappath, out)
    out = out or io.stdout
    local processes = {}
    local find_auditlog =
@@ -656,10 +719,30 @@ function Birdwatch.system_report (shmpath, snappath, out)
       for path in readcmd(find_snap, "*a"):gmatch("([^\n]+)\n") do
          profiles[#profiles+1] = path
       end
-      processes[name] = {auditlog=auditlog, profiles=profiles}
-      io.stderr:write(("Collected %s\n"):format(name))
+      processes[name] = {
+         name = name,
+         auditlog = auditlog,
+         profiles = profiles,
+         info = procinfo(name)
+      }
    end
-   Birdwatch:html_report_processes(processes, out)
+   if path == "/" then
+      Birdwatch:html_report_processes(processes, out)
+   elseif path:match("^/%d+$") then
+      local name = path:match("^/(%d+)$")
+      local process = assert(processes[name])
+      Birdwatch:html_report_process(process, out)
+   elseif path:match("^/%d+/trace/%d+$") then
+      local name, trace = path:match("^/(%d+)/trace/(%d+)$")
+      local process = assert(processes[name])
+      local traceno = assert(tonumber(trace))
+      Birdwatch:html_report_trace_full(process, traceno, out)
+   elseif path:match("^/%d+/event/%d+$") then
+      local name, event = path:match("^/(%d+)/event/(%d+)$")
+      local process = assert(processes[name])
+      local event = assert(tonumber(event))
+      Birdwatch:html_report_event_full(process, event, out)
+   end
 end
 
 function Birdwatch.snapshot (shmpath, snappath, keep_for)
@@ -726,6 +809,13 @@ end
 
 function unlink (path)
    assert(os.execute(("rm -rf '%s'"):format(path)))
+end
+
+function procinfo (pid)
+   pid = assert(tonumber(pid), "Not a valid PID")
+   local f = io.open(("/proc/%d/cmdline"):format(pid), "r")
+   if f == nil then return end
+   return (f:read("*a"):gsub("%c", " "))
 end
 
 local shmpath = os.getenv("SNABB_SHMPATH") or "/var/run/snabb"
