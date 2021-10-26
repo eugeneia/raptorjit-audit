@@ -58,6 +58,7 @@ function VMProfile:new (path, dwarf)
    local f = io.open(path, "r")
    assert(f, "Unable to open file: "..path)
    self.blob = assert(f:read("a*"))
+   assert(f:close())
    self.profile = ffi.cast(vmprofile_ptr_t, self.blob)
    assert(self.profile.magic == 0x1d50f007,
           "VMProfile has wrong magic number: "..path)
