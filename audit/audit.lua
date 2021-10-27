@@ -442,9 +442,9 @@ end
 
 function Auditlog:select_profiles (starttime, endtime)
    if not endtime then
-      endtime = os.time()
+      endtime = self.latest_snapshot
    elseif endtime < 0 then
-      endtime = endtime + os.time()
+      endtime = endtime + self.latest_snapshot
    end
    if not starttime then
       starttime = 0

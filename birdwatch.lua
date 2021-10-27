@@ -90,27 +90,26 @@ function Birdwatch:html_report_profile_snapshots (out)
    out:write("<details>\n")
    out:write("<summary>Profiles</summary>\n")
    local snapshots = {}
-   local now = self.auditlog.latest_snapshot
-   for _=1,5 do
+   local e; for i=1,5 do
       snapshots[#snapshots+1] = {
-         profiles = self.auditlog:select_profiles(now-1, now),
+         profiles = self.auditlog:select_profiles(-i, e),
          size = 'second',
       }
-      now = now - 1
+      e = -i
    end
-   for _=1,2 do
+   local e; for i=1,2 do
       snapshots[#snapshots+1] = {
-         profiles = self.auditlog:select_profiles(now-60, now),
+         profiles = self.auditlog:select_profiles(-i*60, e),
          size = 'minute',
       }
-      now = now - 60
+      e = -i*60
    end
-   for _=1,1 do
+   local e; for i=1,1 do
       snapshots[#snapshots+1] = {
-         profiles = self.auditlog:select_profiles(now-60*60, now),
+         profiles = self.auditlog:select_profiles(-i*60*60, e),
          size = 'hour',
       }
-      now = now - 60*60
+      e = -i*60*60
    end
    -- Stacks
    out:write("<div class=profile-snapshots>")
@@ -745,36 +744,57 @@ function Birdwatch.system_report (path, shmpath, snappath, out)
    end
 end
 
-function Birdwatch.snapshot (shmpath, snappath, keep_for)
+function Birdwatch.snapshot (shmpath, snappath, keep)
+   -- Delete stale snapshots (source shm removed / process exited)
+   local ls1 =
+      ("ls -1 '%s' 2>/dev/null"):format(snappath)
+   for name in readcmd(ls1, "*a"):gmatch("([^\n]+)\n") do
+      if not can_open(shmpath.."/"..name) then
+         --print("unlink", snappath.."/"..name)
+         unlink(snappath.."/"..name)
+      end
+   end
+   -- Delete stale snapshots (n=keep hours, minutes, seconds)
+   keep = keep or 5
+   for name in readcmd(ls1, "*a"):gmatch("([^\n]+)\n") do
+      local find_vmprofile = ("find '%s' -name '*.vmprofile' 2>/dev/null")
+         :format(shmpath.."/"..name)
+      for path in readcmd(find_vmprofile, "*a"):gmatch("([^\n]+)\n") do
+         local snaps = {}
+         local find_snap = ("find '%s' -name '%s.*' 2>/dev/null")
+            :format(snappath.."/"..name, basename(path))
+         for path in readcmd(find_snap, "*a"):gmatch("([^\n]+)\n") do
+            local timestamp = tonumber(path:match("%.([%d]+)$"))
+            snaps[#snaps+1] = {timestamp=timestamp, path=path}
+         end
+         table.sort(snaps, function (x, y) return x.timestamp < y.timestamp end)
+         local inv = {{u=1, n=keep}, {u=60, n=keep}, {u=60*60, n=keep}}
+         local t = os.time()
+         for _, snap in ipairs(snaps) do
+            if #inv > 0 and snap.timestamp >= (t - inv[#inv].u*inv[#inv].n) then
+               --print("keep", snap.path, inv[#inv].u, inv[#inv].n)
+               inv[#inv].n = inv[#inv].n - 1
+               if inv[#inv].n == 0 then
+                  table.remove(inv)
+               end
+            else
+               --print("unlink", snap.path)
+               unlink(snap.path)
+            end
+         end
+      end
+   end
+   -- Take new snapshots
    local find_vmprofile =
       ("find '%s' -name '*.vmprofile' 2>/dev/null"):format(shmpath)
    for path in readcmd(find_vmprofile, "*a"):gmatch("([^\n]+)\n") do
       local profile = vmprofile:new(path)
       local snap = ("%s.%d"):format(path:gsub(shmpath, snappath, 1), os.time())
       local dir = dirname(snap)
-      print("mkdir", dir)
+      --print("mkdir", dir)
       mkdir(dir)
-      print(path, "->", snap)
+      --print(path, "->", snap)
       profile:dump(snap)
-   end
-   local ls1 =
-      ("ls -1 '%s' 2>/dev/null"):format(snappath)
-   for name in readcmd(ls1, "*a"):gmatch("([^\n]+)\n") do
-      if not can_open(shmpath.."/"..name) then
-         print("unlink", snappath.."/"..name)
-         unlink(snappath.."/"..name)
-      end
-   end
-   local find_snap =
-      ("find '%s' -name '*.vmprofile.*' 2>/dev/null"):format(snappath)
-   keep_for = keep_for or 60*60
-   local keep_from = os.time() - keep_for
-   for path in readcmd(find_snap, "*a"):gmatch("([^\n]+)\n") do
-      local timestamp = tonumber(path:match("%.([%d]+)$"))
-      if timestamp < keep_from then
-         print("unlink", path)
-         unlink(path)
-      end
    end
 end
 
