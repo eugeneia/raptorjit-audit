@@ -246,7 +246,7 @@ function IR:const64 (t, ins, trace)
       if proto then
          return Arg:new('func', proto)
       else
-         return Arg:new('func', ("#%s"):format(bit.tohex(func_addr)))
+         return Arg:new('func', ("#%s"):format(tohex(func_addr)))
       end
    else
       -- XXX - NYI
@@ -354,11 +354,11 @@ function Arg:__tostring ()
    elseif self.t == 'slot' then
       return ("#%d"):format(self.val)
    elseif self.t == 'lit' or self.t == 'cst' then
-      return ("%s%d"):format(self.val < 0 and '-' or '+', self.val)
+      return ("%s%d"):format(self.val >= 0 and '+' or '', self.val)
    elseif self.t == 'num' then
       return tostring(self.val)
    elseif self.t == 'intp' then
-      return ("0x%s"):format(bit.tohex(self.val))
+      return ("0x%s"):format(tohex(self.val))
    elseif self.t == 'str' then
       return ("%q"):format(self.val)
    elseif self.t == 'func' then
@@ -375,6 +375,12 @@ function Arg:__tostring ()
    else
       return ("<%s>"):format(self.t)
    end
+end
+
+-- Utilities
+
+function tohex (n)
+   return bit.tohex(n):gsub("^0*(%x+)$", "%1", 1)
 end
 
 -- Module ir
