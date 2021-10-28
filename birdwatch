@@ -1,5 +1,5 @@
 #!/bin/sh
 
 export HERE=$(dirname $0)
-export LUA_PATH="$HERE/?/init.lua;;"
+export LUA_PATH="$HERE/?.lua;$HERE/?/init.lua;;"
 exec $HERE/birdwatch.lua $@
