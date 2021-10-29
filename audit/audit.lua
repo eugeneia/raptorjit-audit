@@ -27,6 +27,8 @@ local ffi = require("ffi")
 local Auditlog, Memory, VMProfile = {}, {}, {}
 local Event, Prototype, Trace, TraceAbort = {}, {}, {}, {}
 
+local function dbg (msg, ...) io.stderr:write(msg:format(...).."\n") end
+
 function Auditlog:new (path)
    local self = {
       log = nil,
@@ -84,7 +86,11 @@ function Auditlog:read_auditlog (data)
    data = ffi.cast("uint8_t *", data)
    local log = {}
    while offset < len do
-      local event, elen = msgpack.read(data, offset)
+      local ok, event, elen = pcall(msgpack.read, data, offset, len)
+      if not ok then
+         dbg("Error reading auditlog event %d (incomplete auditlog?)", #log+1)
+         break
+      end
       offset = offset + elen
       log[#log+1] = event
    end
