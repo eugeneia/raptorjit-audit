@@ -835,7 +835,9 @@ function procinfo (pid)
    pid = assert(tonumber(pid), "Not a valid PID")
    local f = io.open(("/proc/%d/cmdline"):format(pid), "r")
    if f == nil then return end
-   return (f:read("*a"):gsub("%c", " "))
+   local info = f:read("*a"):gsub("%c", " ")
+   assert(f:close())
+   return info
 end
 
 local shmpath = os.getenv("SNABB_SHMPATH") or "/var/run/snabb"
