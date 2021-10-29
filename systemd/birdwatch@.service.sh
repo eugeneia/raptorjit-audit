@@ -10,4 +10,5 @@ Environment="HOME=%h"
 #ExecStart=-$(pwd)/birdwatch socket-activate
 ExecStart=$(pwd)/birdwatch socket-activate
 StandardInput=socket
+StandardError=journal
 EOF
