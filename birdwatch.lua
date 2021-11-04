@@ -4,6 +4,8 @@ local audit = require("audit")
 local vmprofile = require("audit.vmprofile")
 local IR = require("audit.ir")
 
+local function dbg (msg, ...) io.stderr:write(msg:format(...).."\n") end
+
 local Birdwatch = {}
 
 function Birdwatch:html_report_processes (processes, out)
@@ -70,7 +72,13 @@ function Birdwatch:new (arg)
    self.auditlog = audit:new(arg.auditlog)
    for _, profile in ipairs(arg.profiles) do
       local timestamp = tonumber(profile:match("%.([%d]+)$"))
-      self.auditlog:add_profile(profile, timestamp)
+      local function add_profile (profile, timestamp)
+         self.auditlog:add_profile(profile, timestamp)
+      end
+      local ok, err = pcall(add_profile, profile, timestamp)
+      if not ok then
+         dbg("Failed to add profile %s: %s", profile, err)
+      end
    end
    return self
 end
@@ -97,14 +105,14 @@ function Birdwatch:html_report_profile_snapshots (out)
       }
       e = -i
    end
-   local e; for i=1,2 do
+   local e; for i=1,3 do
       snapshots[#snapshots+1] = {
          profiles = self.auditlog:select_profiles(-i*60, e),
          size = 'minute',
       }
       e = -i*60
    end
-   local e; for i=1,1 do
+   local e; for i=1,2 do
       snapshots[#snapshots+1] = {
          profiles = self.auditlog:select_profiles(-i*60*60, e),
          size = 'hour',
@@ -594,13 +602,10 @@ function Birdwatch:html_report_style (out)
       .irop-Call { color: #7239b3; }
 
       .portion { width: 100%; cursor: pointer; }
-      .portion:first-child { border-radius: 0.5em 0.5em 0 0; }
-      .portion:last-child { border-radius: 0 0 0.5em 0.5em; }
-      .snapshot-stack { width: 30px; margin: 2px; border-radius: 0.5em; }
+      .snapshot-stack { width: 30px; margin: 2px; }
       .snapshot-stack[minute] { width: 60px; }
       .snapshot-stack[hour] { width: 120px; }
-      .snapshot-stack[active] { border-bottom: medium solid #64baff;
-                                border-left: medium solid #64baff; }
+      .snapshot-stack[active] { border: medium solid #64baff; }
       .profile-snapshots { display: flex; overflow: auto; }
   
       .snapshot { display: none; }
@@ -755,7 +760,7 @@ function Birdwatch.snapshot (shmpath, snappath, keep)
       end
    end
    -- Delete stale snapshots (n=keep hours, minutes, seconds)
-   keep = keep or 5
+   keep = keep or 6
    for name in readcmd(ls1, "*a"):gmatch("([^\n]+)\n") do
       local find_vmprofile = ("find '%s' -name '*.vmprofile' 2>/dev/null")
          :format(shmpath.."/"..name)
@@ -768,19 +773,26 @@ function Birdwatch.snapshot (shmpath, snappath, keep)
             snaps[#snaps+1] = {timestamp=timestamp, path=path}
          end
          table.sort(snaps, function (x, y) return x.timestamp < y.timestamp end)
-         local inv = {{u=1, n=keep}, {u=60, n=keep}, {u=60*60, n=keep}}
+         local wanted = {}
+         for _, u in ipairs{60*60, 60, 1} do
+            for n=keep,1,-1 do
+               wanted[#wanted+1] = {u=u, age=u*n}
+            end
+         end
          local t = os.time()
          for _, snap in ipairs(snaps) do
-            if #inv > 0 and snap.timestamp >= (t - inv[#inv].u*inv[#inv].n) then
-               --print("keep", snap.path, inv[#inv].u, inv[#inv].n)
-               inv[#inv].n = inv[#inv].n - 1
-               if inv[#inv].n == 0 then
-                  table.remove(inv)
+            local age = t - snap.timestamp
+            for i, want in ipairs(wanted) do
+               if math.abs(age - want.age) <= want.u then
+                  table.remove(wanted, i)
+                  --print("keep", snap.path, "want", want.age, "age", age)
+                  goto keep
                end
-            else
-               --print("unlink", snap.path)
-               unlink(snap.path)
             end
+            ::discard::
+            --print("unlink", snap.path)
+            unlink(snap.path)
+            ::keep::
          end
       end
    end
