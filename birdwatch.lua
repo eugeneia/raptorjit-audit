@@ -131,14 +131,18 @@ function Birdwatch:html_report_profile_snapshots (out)
          by_name[#by_name+1] = name
          total_samples = total_samples + profile:total_samples()
       end
-      table.sort(by_name)
-      for _, name in ipairs(by_name) do
-         local profile = snap.profiles[name]
-         local share = percent(profile:total_samples(), total_samples)
-         if share >= 0.5 then
-            out:write(("<div class=portion style='height:%.0fpx;' profile='%s' title='%s (%.1f%%)'></div>")
-               :format(share, name, name, share))
+      if total_samples > 0 then
+         table.sort(by_name)
+         for _, name in ipairs(by_name) do
+            local profile = snap.profiles[name]
+            local share = percent(profile:total_samples(), total_samples)
+            if share >= 0.5 then
+               out:write(("<div class=portion style='height:%.0fpx;' profile='%s' title='%s (%.1f%%)'></div>")
+                  :format(share, name, name, share))
+            end
          end
+      else
+         out:write("<div class='portion nosamples' style='height:100px;' title='No profile samples. Is profiling enabled?'></div>")
       end
       out:write("</div>")
    end
@@ -155,22 +159,31 @@ function Birdwatch:html_report_profile_snapshots (out)
 end
 
 function Birdwatch:html_report_profiles (profiles, out)
-   local total_samples = 0
+   local sum_profile
    local by_name_sorted = {}
    for name, profile in pairs(profiles) do
-      total_samples = total_samples + profile:total_samples()
+      sum_profile = (sum_profile and sum_profile:sum(profile)) or profile
       by_name_sorted[#by_name_sorted+1] = name
    end
    local function by_samples (x, y)
       return profiles[x]:total_samples() > profiles[y]:total_samples()
    end
    table.sort(by_name_sorted, by_samples)
+   if sum_profile:total_samples() > 0 then
+      out:write("<details>\n")
+      out:write("<summary>all profiles (100%)</summary>\n")
+      self:html_report_profile(sum_profile, out)
+      out:write("</details>\n")
+   else
+      out:write("<p>No samples in profiles. Is profiling enabled?</p>\n")
+   end
    for _, name in pairs(by_name_sorted) do
       local profile = profiles[name]
       if profile:total_samples() > 0 then
          out:write("<details>\n")
          out:write(("<summary>%s (%.1f%%)</summary>\n")
-            :format(name, percent(profile:total_samples(), total_samples)))
+            :format(name, percent(profile:total_samples(),
+                                  sum_profile:total_samples())))
          self:html_report_profile(profile, out)
          out:write("</details>\n")
       end
@@ -602,6 +615,7 @@ function Birdwatch:html_report_style (out)
       .irop-Call { color: #7239b3; }
 
       .portion { width: 100%; cursor: pointer; }
+      .nosamples { background: #f4f4f4; }
       .snapshot-stack { width: 30px; margin: 2px; }
       .snapshot-stack[minute] { width: 60px; }
       .snapshot-stack[hour] { width: 120px; }
