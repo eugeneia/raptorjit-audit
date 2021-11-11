@@ -8,15 +8,15 @@ assert(ffi.abi("le")) -- XXX assumes little endian cpu.
 -- msgpack.read(unsigned char *, number) -> object, number
 --    Read msgpack object starting at data+offset.
 --    Return parsed object and size of msgpack encoded object (bytes consumed).
-function read (data, offset)
+function read (data, offset, limit)
    if band(data[offset], 0xf0) == 0x80 then
-      return read_fixmap(data, offset)
+      return read_fixmap(data, offset, limit)
    elseif  data[offset]        == 0xda then
-      return read_str16(data, offset)
+      return read_str16(data, offset, limit)
    elseif  data[offset]        == 0xcf then
-      return read_uint64(data, offset)
+      return read_uint64(data, offset, limit)
    elseif  data[offset]        == 0xc6 then
-      return read_bin32(data, offset)
+      return read_bin32(data, offset, limit)
    else
       error(("NYI: %x at offset %d"):format(data[offset], offset))
    end
@@ -27,21 +27,23 @@ local fixmap_t = ffi.typeof[[struct {
    uint8_t tag; uint8_t objects[1];
 }__attribute__((packed))]]
 local fixmap_ptr_t = ffi.typeof("$*", fixmap_t)
-function read_fixmap (data, offset)
+function read_fixmap (data, offset, limit)
    offset = offset or 0
    data = ffi.cast(fixmap_ptr_t, data+offset)
+   limit = limit - offset - (ffi.sizeof(fixmap_t)-1)
+   assert(limit >= 0)
    assert(band(data.tag, 0xf0) == 0x80)
    local npairs = band(data.tag, 0xf)
    local ret = {}
    local index = 0
    for _=1, npairs do
-      local key, len = read(data.objects, index)
+      local key, len = read(data.objects, index, limit)
       index = index + len
-      local value, len = read(data.objects, index)
+      local value, len = read(data.objects, index, limit)
       index = index + len
       ret[key] = value
    end
-   return ret, ffi.sizeof(fixmap_t) + index-1
+   return ret, ffi.sizeof(fixmap_t)-1 + index
 end
 
 -- msgpack: string with 16-bit length
@@ -49,13 +51,16 @@ local str16_t = ffi.typeof[[struct {
    uint8_t tag; uint16_t len; uint8_t str[1];
 }__attribute__((packed))]]
 local str16_ptr_t = ffi.typeof("$*", str16_t)
-function read_str16 (data, offset)
+function read_str16 (data, offset, limit)
    offset = offset or 0
    data = ffi.cast(str16_ptr_t, data+offset)
+   limit = limit - offset - (ffi.sizeof(str16_t)-1)
+   assert(limit >= 0)
    assert(data.tag == 0xda)
    local len = rshift(bswap(data.len), 16)
+   assert(limit >= len)
    local ret = ffi.string(data.str, len)
-   return ret, ffi.sizeof(str16_t) + len-1
+   return ret, ffi.sizeof(str16_t)-1 + len
 end
 
 -- msgpack: 64-bit unsigned integer
@@ -63,7 +68,8 @@ local uint64_t = ffi.typeof[[struct {
    uint8_t tag; uint64_t n;
 }__attribute__((packed))]]
 local uint64_ptr_t = ffi.typeof("$*", uint64_t)
-function read_uint64 (data, offset)
+function read_uint64 (data, offset, limit)
+   assert(limit - offset - ffi.sizeof(uint64_t) >= 0)
    offset = offset or 0
    data = ffi.cast(uint64_ptr_t, data+offset)
    assert(data.tag == 0xcf)
@@ -76,13 +82,16 @@ local bin32_t = ffi.typeof[[struct {
    uint8_t tag; uint32_t len; uint8_t data[1];
 }__attribute__((packed))]]
 local bin32_ptr_t = ffi.typeof("$*", bin32_t)
-function read_bin32 (data, offset)
+function read_bin32 (data, offset, limit)
    offset = offset or 0
    data = ffi.cast(bin32_ptr_t, data+offset)
+   limit = limit - offset - (ffi.sizeof(bin32_t)-1)
+   assert(limit >= 0)
    assert(data.tag == 0xc6)
    local len = bswap(data.len)
+   assert(limit >= len)
    local ret = ffi.string(data.data, len)
-   return ret, ffi.sizeof(bin32_t) + len-1
+   return ret, ffi.sizeof(bin32_t)-1 + len
 end
 
 -- Module msgpack

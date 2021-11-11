@@ -97,7 +97,7 @@ local Operators = {
    TSETS = {a="var", b="var", c="str", hint="B[C] = A"},
    TSETB = {a="var", b="var", c="lit", hint="B[C] = A"},
    TSETR = {a="var", b="var", c="lit", hint="B[C] = A (rawset)"},
-   TSETM = {a="base", d="num*", hint="(A-1)[D], (A-1)[D+1], ... = A, A+1, ..."},
+   TSETM = {a="base", d="num", hint="(A-1)[D], (A-1)[D+1], ... = A, A+1, ..."},
    -- Calls and Vararg Handling
    CALLM = {a="base",b="lit", c="lit", hint="Call: A, ..., A+B-2 = A(A+1, ..., A+C+MULTRES)"},
    CALL = {a="base",b="lit", c="lit", hint="Call: A, ..., A+B-2 = A(A+1, ..., A+C-1)"},

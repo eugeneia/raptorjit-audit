@@ -8,6 +8,9 @@ local ffi = require("ffi")
 -- VMProfile:delta(VMProfile) -> VMProfile
 --    Make a new VMProfile that is the delta of two profiles. a:delta(b) -> b-a
 --
+-- VMProfile:sum(VMProfile) -> VMProfile
+--    Make a new VMProfile that is the sum of two profiles. a:sum(b) -> a+b
+--
 -- VMProfile:count(traceno, vmst) -> number
 --    Sample count for Trace by traceno in VM state.
 --
@@ -58,6 +61,8 @@ function VMProfile:new (path, dwarf)
    local f = io.open(path, "r")
    assert(f, "Unable to open file: "..path)
    self.blob = assert(f:read("a*"))
+   self.size = #self.blob
+   assert(f:close())
    self.profile = ffi.cast(vmprofile_ptr_t, self.blob)
    assert(self.profile.magic == 0x1d50f007,
           "VMProfile has wrong magic number: "..path)
@@ -85,7 +90,8 @@ function VMProfile:delta (vmprofile)
       assert(vmprofile.specs[spec] == value, "VMProfile spec mismatch: "..spec)
    end
    local delta = setmetatable({specs=self.specs}, {__index=VMProfile})
-   delta.blob = ffi.new("uint8_t[?]", #self.blob)
+   delta.blob = ffi.new("uint8_t[?]", self.size)
+   delta.size = self.size
    delta.profile = ffi.cast(vmprofile_ptr_t, delta.blob)
    delta.profile.magic, delta.profile.major, delta.profile.minor =
       self.profile.magic, self.profile.major, self.profile.minor
@@ -99,6 +105,29 @@ function VMProfile:delta (vmprofile)
    end
 
    return delta
+end
+
+function VMProfile:sum (vmprofile)
+   -- Clone profile
+   for spec, value in pairs(self.specs) do
+      assert(vmprofile.specs[spec] == value, "VMProfile spec mismatch: "..spec)
+   end
+   local sum = setmetatable({specs=self.specs}, {__index=VMProfile})
+   sum.blob = ffi.new("uint8_t[?]", self.size)
+   sum.size = self.size
+   sum.profile = ffi.cast(vmprofile_ptr_t, sum.blob)
+   sum.profile.magic, sum.profile.major, sum.profile.minor =
+      self.profile.magic, self.profile.major, self.profile.minor
+   -- Populate with count sums
+   for traceno=0, self.specs.trace_max do
+      for vmst=0, self.specs.vmst_max-1 do
+         local idx = self:index(traceno, vmst)
+         sum.profile.count[idx] =
+            self.profile.count[idx] + vmprofile.profile.count[idx]
+      end
+   end
+
+   return sum
 end
 
 function VMProfile:vmst_name (vmst)

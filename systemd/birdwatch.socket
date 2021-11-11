@@ -1,0 +1,9 @@
+[Unit]
+Description=HTTP Socket for Birdwatch
+
+[Socket]
+ListenStream=[::1]:8077
+Accept=yes
+
+[Install]
+WantedBy=sockets.target

@@ -27,6 +27,8 @@ local ffi = require("ffi")
 local Auditlog, Memory, VMProfile = {}, {}, {}
 local Event, Prototype, Trace, TraceAbort = {}, {}, {}, {}
 
+local function dbg (msg, ...) io.stderr:write(msg:format(...).."\n") end
+
 function Auditlog:new (path)
    local self = {
       log = nil,
@@ -45,6 +47,7 @@ function Auditlog:new (path)
    local f = io.open(path, "r")
    assert(f, "Unable to open file: "..path)
    local data = assert(f:read("a*"))
+   assert(f:close())
    self.log = self:read_auditlog(data)
    -- Find DWARF debug info
    local dwo
@@ -83,7 +86,11 @@ function Auditlog:read_auditlog (data)
    data = ffi.cast("uint8_t *", data)
    local log = {}
    while offset < len do
-      local event, elen = msgpack.read(data, offset)
+      local ok, event, elen = pcall(msgpack.read, data, offset, len)
+      if not ok then
+         dbg("Error reading auditlog event %d (incomplete auditlog?)", #log+1)
+         break
+      end
       offset = offset + elen
       log[#log+1] = event
    end
@@ -337,9 +344,15 @@ function Trace:instructions ()
    end
    -- Parse IR instructions
    local nins = self.GCtrace.nins - self.ref_bias - 1
+   local mcode = self.mcode + self.szirmcode[0]
+   local maddr = ffi.cast("intptr_t", self.GCtrace.mcode) + self.szirmcode[0]
    local ret = {}
    for i = 1, nins-1 do
-      ret[#ret+1] = ir:new(self, nk+i, ret[#ret], k)
+      local asm = {address = tonumber(maddr),
+                   mcode = ffi.string(mcode, self.szirmcode[i])}
+      mcode = mcode + self.szirmcode[i]
+      maddr = maddr + self.szirmcode[i]
+      ret[#ret+1] = ir:new(self, nk+i, ret[#ret], k, asm)
    end
    return ret
 end
@@ -433,9 +446,8 @@ function Auditlog:add_profile (path, timestamp)
    }
    self.latest_snapshot = math.max(self.latest_snapshot, snapshot.timestamp)
    if snapshots then
-      assert(snapshots[#snapshots].timestamp <= snapshot.timestamp,
-             "Auditlog already has a later profile for: "..name)
       snapshots[#snapshots+1] = snapshot
+      table.sort(snapshots, function (x, y) return x.timestamp < y.timestamp end)
    else
       self.profiles[name] = {snapshot}
    end
@@ -443,9 +455,9 @@ end
 
 function Auditlog:select_profiles (starttime, endtime)
    if not endtime then
-      endtime = os.time()
+      endtime = self.latest_snapshot
    elseif endtime < 0 then
-      endtime = endtime + os.time()
+      endtime = endtime + self.latest_snapshot
    end
    if not starttime then
       starttime = 0

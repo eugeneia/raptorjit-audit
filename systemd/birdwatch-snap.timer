@@ -1,0 +1,10 @@
+[Unit]
+Description=Birdwatch Snapshot Timer
+
+[Timer]
+OnActiveSec=1s
+OnUnitActiveSec=1s
+AccuracySec=1us
+
+[Install]
+WantedBy=timers.target
