@@ -900,7 +900,7 @@ local snappath = os.getenv("SNABB_SNAPSHOTS") or os.getenv("HOME").."/birdwatch-
 if arg[1] == 'snap' then
    Birdwatch.snapshot(shmpath, snappath)
 elseif arg[1] == 'report' then
-   Birdwatch.system_report(shmpath, snappath)
+   Birdwatch.system_report(arg[2], shmpath, snappath)
 elseif arg[1] == 'socket-activate' then
    Birdwatch.socket_activate(shmpath, snappath)
 else
