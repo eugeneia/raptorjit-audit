@@ -95,7 +95,7 @@ end
 local function percent (n, total) return n/total*100 end
 
 function Birdwatch:html_report_profile_snapshots (out)
-   out:write("<details>\n")
+   out:write("<details open>\n")
    out:write("<summary>Profiles</summary>\n")
    local snapshots = {}
    local e; for i=1,5 do
