@@ -50,6 +50,7 @@ local insn = trace25:instructions()
 for i, ins in ipairs(insn) do
    print(i, ins.sunk and '>' or '', ins.reg or ins.slot or '', ins.t or '',
          ins.opcode, ins.op1 or '', ins.op2 or '') -- , ins.hint)
+   --if ins.disasm then print(ins.disasm) end
 end
 
 auditlog:add_profile("test/snabb-basic1/vmprofile/apps.basic.basic_apps.vmprofile")

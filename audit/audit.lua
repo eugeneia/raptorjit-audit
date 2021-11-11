@@ -344,9 +344,15 @@ function Trace:instructions ()
    end
    -- Parse IR instructions
    local nins = self.GCtrace.nins - self.ref_bias - 1
+   local mcode = self.mcode + self.szirmcode[0]
+   local maddr = ffi.cast("intptr_t", self.GCtrace.mcode) + self.szirmcode[0]
    local ret = {}
    for i = 1, nins-1 do
-      ret[#ret+1] = ir:new(self, nk+i, ret[#ret], k)
+      local asm = {address = tonumber(maddr),
+                   mcode = ffi.string(mcode, self.szirmcode[i])}
+      mcode = mcode + self.szirmcode[i]
+      maddr = maddr + self.szirmcode[i]
+      ret[#ret+1] = ir:new(self, nk+i, ret[#ret], k, asm)
    end
    return ret
 end

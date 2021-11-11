@@ -1,4 +1,5 @@
 local ffi = require("ffi")
+local dis = require("jit.dis_x64")
 local band, lshift, rshift = bit.band, bit.lshift, bit.rshift
 
 -- LuaJIT IR
@@ -137,9 +138,17 @@ Op.Misc = set{ 'nop', 'base', 'pval', 'gcstep', 'hiop', 'loop', 'use',
 Op.Nop = set{ 'nop' }
 Op.Phi = set{ 'phi' }
 
-function IR:new (trace, pos, prev, k)
+function IR:new (trace, pos, prev, k, asm)
    local ins = trace.ir[pos]
    local ret = {}
+
+   -- Associated assembly
+   local function set_disasm (s)
+      ret.disasm = (ret.disasm and ret.disasm..'\n'..s) or s
+   end
+   if asm then
+      dis.create(asm.mcode, asm.address, set_disasm):disass(0, #asm.mcode)
+   end
 
    -- 64-bit inline constants
    if prev and prev.next then

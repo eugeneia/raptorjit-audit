@@ -333,6 +333,11 @@ function Birdwatch:html_report_trace (trace, out, full)
       out:write("<summary>Instructions</summary>\n")
       self:html_report_instructions(trace:instructions(), out, trace.traceno)
       out:write("</details>\n")
+      -- Disassembly
+      out:write("<details>\n")
+      out:write("<summary>Machine code</summary>\n")
+      self:html_report_mcode(trace:instructions(), out)
+      out:write("</details>\n")
    end
    -- Events
    out:write("<details>\n")
@@ -478,6 +483,29 @@ function Birdwatch:html_report_bytecodes (bytecodes, out)
          out:write(("<td><em>%s</em></td>\n"):format(bc.hint))
       end
       out:write("</tr>\n")
+   end
+   out:write("</tbody>\n")
+   out:write("</table>\n")
+   out:write("</div>\n")
+end
+
+function Birdwatch:html_report_mcode (instructions, out)
+   out:write("<div class='scroll'>\n")
+   out:write("<table>\n")
+   out:write("<thead>\n")
+   out:write("<tr>\n")
+   out:write("<th>#</th>\n")
+   out:write("<th>Disassembly</th>\n")
+   out:write("</tr>\n")
+   out:write("</thead>\n")
+   out:write("<tbody>\n")
+   for i, ins in ipairs(instructions) do
+      if ins.disasm then
+         out:write("<tr>\n")
+         out:write(("<td class=right><tt>%d</tt></td>\n"):format(i))
+         out:write(("<td><pre>%s</pre></td>\n"):format(ins.disasm))
+         out:write("</tr>\n")
+      end
    end
    out:write("</tbody>\n")
    out:write("</table>\n")
