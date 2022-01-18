@@ -736,7 +736,7 @@ end
 
 function Birdwatch.socket_activate (shmpath, snappath)
    -- HTTP/1.1 sorta
-   local request = io.stdin:read("l")
+   local request = io.stdin:read("*l")
    local path = request:match("^GET ([^ ]+) HTTP/1.1")
    assert(path, "Not a GET request")
    io.stdout:write("HTTP/1.1 200 OK\r\n")
