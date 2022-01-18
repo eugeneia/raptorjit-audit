@@ -60,7 +60,7 @@ function VMProfile:new (path, dwarf)
    -- Read profile
    local f = io.open(path, "r")
    assert(f, "Unable to open file: "..path)
-   self.blob = assert(f:read("a*"))
+   self.blob = assert(f:read("*a"))
    self.size = #self.blob
    assert(f:close())
    self.profile = ffi.cast(vmprofile_ptr_t, self.blob)

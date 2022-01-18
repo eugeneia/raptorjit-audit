@@ -46,7 +46,7 @@ function Auditlog:new (path)
    -- Read auditlog
    local f = io.open(path, "r")
    assert(f, "Unable to open file: "..path)
-   local data = assert(f:read("a*"))
+   local data = assert(f:read("*a"))
    assert(f:close())
    self.log = self:read_auditlog(data)
    -- Find DWARF debug info

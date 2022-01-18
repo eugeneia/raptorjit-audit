@@ -7,7 +7,7 @@ StartLimitIntervalSec=5
 StartLimitBurst=10
 
 [Service]
-Environment="PATH=/usr/bin"
+Environment="PATH=${PATH}"
 Environment="HOME=%h"
 ExecStart=$(pwd)/birdwatch snap
 EOF
