@@ -5,7 +5,7 @@ cat <<EOF
 Description=Birdwatch responder
 
 [Service]
-Environment="PATH=/usr/bin"
+Environment="PATH=${PATH}"
 Environment="HOME=%h"
 #ExecStart=-$(pwd)/birdwatch socket-activate
 ExecStart=$(pwd)/birdwatch socket-activate
