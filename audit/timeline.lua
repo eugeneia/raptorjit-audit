@@ -6,7 +6,7 @@ local ffi = require("ffi")
 local log, floor, max, min = math.log, math.floor, math.max, math.min
 
 -- The first and last buckets are catch-alls.
-local bucket_count = 1000
+local bucket_count = 200
 local histogram_t = ffi.typeof([[struct {
    double minimum;
    double growth_factor_log;
@@ -89,13 +89,26 @@ function summarize (histogram, prev)
    return min, cumulative / tonumber(total), max
 end
 
+function median (histogram, pos)
+   pos = pos or 0.5
+   local point = math.floor(tonumber(histogram.total)*pos)
+   local i = 0
+   for count, lo, hi in histogram:iterate(prev) do
+      i = i + count
+      if i >= point then
+         return (lo+hi)/2
+      end
+   end
+end
+
 ffi.metatype(histogram_t, {__index = {
    add = add,
    iterate = iterate,
    snapshot = snapshot,
    wrap_thunk = wrap_thunk,
    clear = clear,
-   summarize = summarize
+   summarize = summarize,
+   median = median,
 },
 __tostring = function (histogram)
    return ("min: %.2f / avg: %.2f / max: %.2f"):format(summarize(histogram))
@@ -150,7 +163,9 @@ function Timeline:new (path)
       self.messages[id] = self:parse_message(string)
    end
    self.log = self:read_log(self.timeline + 64)
+   self:compute_lag(self.log)
    self.events = self:summarize_events(self.log)
+   self:compute_histogram_quantiles(self.events, 'breath_lag')
    return self
 end
 
@@ -187,24 +202,12 @@ end
 function Timeline:read_log (entries)
    local entries = ffi.cast(ffi.typeof("$*", self.entry_t), entries)
    local log = {}
-   local prev_tsc = {}
-   local function tsc_lag (level, tsc)
-      -- fixme: account for unsynchronized TSC across core/node
-      local prev = prev_tsc[level]
-      for l = level, 9 do
-         prev_tsc[l] = tsc
-      end
-      if prev and prev < tsc then
-         return tsc - prev
-      end
-   end
    for i=0, (self.header.log_bytes/64)-1 do
       local entry = entries[i]
       if entry.tsc > 0 then
          local message = assert(self.messages[entry.msgid])
          local e = {
             tsc = entry.tsc,
-            lag = tsc_lag(message.level, entry.tsc),
             core = bit.band(entry.core_numa, 0x7f),
             node = bit.rshift(entry.core_numa, 7),
             message = message,
@@ -217,6 +220,32 @@ function Timeline:read_log (entries)
       else break end
    end
    return log
+end
+
+function Timeline:compute_lag (log)
+   -- FIXME: account for unsynchronized TSC across core/node
+   local prev_tsc = {}
+   local function tsc_lag (entry)
+      local prev = prev_tsc[entry.message.level]
+      for level = entry.message.level, 9 do
+         prev_tsc[level] = entry.tsc
+      end
+      if prev and prev < entry.tsc then
+         return entry.tsc - prev
+      end
+   end
+   local breath_tsc = nil
+   local function breath_lag (entry)
+      if entry.message.name == 'engine.breath_start' then
+         breath_tsc = entry.tsc
+      elseif breath_tsc and breath_tsc < entry.tsc then
+         return entry.tsc - breath_tsc
+      end
+   end
+   for _, entry in ipairs(log) do
+      entry.lag = tsc_lag(entry)
+      entry.breath_lag = breath_lag(entry)
+   end
 end
 
 function Timeline:summarize_events (log)
@@ -235,99 +264,190 @@ function Timeline:summarize_events (log)
       event.count = event.count + 1
       event.core[entry.core] = (event.core[entry.core] or 0) + 1
       event.core[entry.node] = (event.core[entry.node] or 0) + 1
-      if entry.lag then
-         event.lag = event.lag or {}
-         event.lag.min = math.min(event.lag.min or entry.lag, entry.lag)
-         event.lag.max = math.max(event.lag.max or entry.lag, entry.lag)
-         event.lag.total = (event.lag.total or 0) + entry.lag
+      for _, lag in ipairs{'lag', 'breath_lag'} do
+         if entry[lag] then
+            event[lag] = event[lag] or {}
+            event[lag].min = math.min(event[lag].min or entry[lag], entry[lag])
+            event[lag].max = math.max(event[lag].max or entry[lag], entry[lag])
+            event[lag].total = (event[lag].total or 0) + entry[lag]
+         end
       end
    end
    for _, event in pairs(events) do
-      if event.lag then
-         event.lag.histogram = new_histogram(event.lag.min/2, event.lag.max*2)
+      for _, lag in ipairs{'lag', 'breath_lag'} do
+         if event[lag] then
+            event[lag].histogram = new_histogram(event[lag].min/10, event[lag].max*2)
+         end
       end
    end
    for _, entry in ipairs(log) do
       local event = events[entry.message.name]
-      if entry.lag then
-         event.lag.histogram:add(entry.lag)
+      for _, lag in ipairs{'lag', 'breath_lag'} do
+         if entry[lag] then
+            event[lag].histogram:add(entry[lag])
+         end
       end
    end
    return events
 end
 
-function Timeline:events_sorted_by_estimated_total_lag (events)
-   local function rate_factor (event)
-      return 5^(9-event.message.rate)
-   end
-   local function estimated_total_lag (event)
-      if event.lag then
-         return event.lag.total * rate_factor(event)
-      else
-         return 0
+function Timeline:compute_histogram_quantiles (events, lag)
+   for _, event in pairs(events) do
+      if event[lag] then
+         event[lag].q1 = event[lag].histogram:median(0.25)
+         event[lag].q2 = event[lag].histogram:median(0.5)
+         event[lag].q3 = event[lag].histogram:median(0.75)
       end
    end
-   local function estimated_total_count (event)
-      return event.count * rate_factor(event)
-   end
+end
 
+function Timeline:select_events (events, filter)
+   local selected = {}
+   for name, event in pairs(events) do
+      if name:match(filter) then
+         table.insert(selected, event)
+      end
+   end
+   return selected
+end
+
+function Timeline:sort_events_by_breath_lag (events)
+   table.sort(events, function (x, y)
+      local x_lag = (x.breath_lag and x.breath_lag.q2) or 0
+      local y_lag = (y.breath_lag and y.breath_lag.q2) or 0
+      return x_lag > y_lag
+   end)
+end
+
+function Timeline:rate_factor (event)
+   return 5^(9-event.message.rate)
+end
+
+function Timeline:estimated_total_lag (event)
+   if event.lag then
+      return event.lag.total * self:rate_factor(event)
+   else
+      return 0
+   end
+end
+
+function Timeline:estimated_total_count (event)
+   return event.count * self:rate_factor(event)
+end
+
+function Timeline:events_sorted_by_estimated_total_lag (events)
    local events_sorted = {}
    for _, event in pairs(events) do
       table.insert(events_sorted, event)
    end
    table.sort(events_sorted, function (x, y)
-      return estimated_total_lag(x) > estimated_total_lag(y)
+      return self:estimated_total_lag(x) > self:estimated_total_lag(y)
    end)
-
-   -- for _, event in ipairs(events_sorted) do
-   --    print(event.message.name)
-   --    print("", "estimated occurence", estimated_total_count(event))
-   --    if event.lag then
-   --       print("", "estimated total lag", estimated_total_lag(event))
-   --       print("", "lag histogram", event.lag.histogram)
-   --    end
-   -- end
-
    return events_sorted
+end
+
+function comma_value(n) -- credit http://richard.warburton.it
+   if type(n) == 'cdata' then
+      n = string.match(tostring(n), '^-?([0-9]+)U?LL$') or tonumber(n)
+   end
+   if n ~= n then return "NaN" end
+   local left,num,right = string.match(n,'^([^%d]*%d)(%d*)(.-)$')
+   return left..(num:reverse():gsub('(%d%d%d)','%1,'):reverse())..right
+end
+
+function round (n)
+   local f = 10^math.floor(math.log(n, 10))
+   return math.floor(n/f)*f
+end
+
+function Timeline:html_histogram (out, h, opt)
+   out:write(("<div id='%s'></div>\n"):format(opt.id))
+   out:write("<script>\n")
+   out:write("var x = [\n")
+   for count, lo, hi in h:iterate() do
+      if count > 0 then
+         out:write(("%d,"):format(math.ceil(lo)))
+      end
+   end
+   out:write("\n]\n")
+   out:write("var y = [\n")
+   for count, lo, hi in h:iterate() do
+      if count > 0 then
+         out:write(("%f,"):format(tonumber(count)/tonumber(h.total)))
+      end
+   end
+   out:write("\n]\n")
+   out:write (([[
+      var data = { x: x, y: y, type: 'bar' }
+      var layout = {
+         xaxis: {
+            title: { text: %q },
+            type: 'log',
+            autorange: false,
+            range: [%f, %f]
+         },
+         yaxis: {
+            title: { text: 'density' },
+            autorange: true,
+            fixedrange: true
+         },
+         height: 300
+      }
+      Plotly.newPlot('%s', [data], layout);
+      </script> 
+   ]]):format(
+      opt.unit,
+      math.log10(opt.min),
+      math.log10(opt.max),
+      opt.id
+   ))
+end
+
+function Timeline:html_breath_summary (out, events, id)
+   id = 'tl_breath_lag_'..id
+   out:write(("<div id='%s'></div>\n"):format(id))
+   out:write("<script>\n")
+   out:write("var data = [\n")
+   for _, event in ipairs(events) do
+      if event.breath_lag then
+         out:write(("{y0:%q, q1:[%f], median:[%f], q3:[%f], type:'box', orientation:'h'},\n")
+            :format(event.message.name, event.breath_lag.q1, event.breath_lag.q2, event.breath_lag.q3))
+      end
+   end
+   out:write("]\n")
+   out:write(("Plotly.newPlot(%q, data, { showlegend: false, margin: {l:200}, xaxis: { title: { text: %q } } })\n")
+      :format(id, 'tsc'))
+   out:write("</script>\n")
 end
 
 function Timeline:html_dump (out)
    local events = self:events_sorted_by_estimated_total_lag(self.events)
    out = out or io.stdout
    out:write("<script src='https://cdn.plot.ly/plotly-2.14.0.min.js'></script>\n")
+   out:write("<h2>Breath summary</h2>\n")
+   local engine_events = self:select_events(self.events, "^engine%.")
+   self:sort_events_by_breath_lag(engine_events)
+   self:html_breath_summary(out, engine_events, 'engine')
+   out:write("<h2>App summary</h2>\n")
+   local app_events = self:select_events(self.events, "^app%.")
+   self:sort_events_by_breath_lag(app_events)
+   self:html_breath_summary(out, app_events, 'app')
+   out:write("<h2>Event lag</h2>\n")
    for _, event in ipairs(events) do
       out:write(("<h3>%s</h3>\n"):format(event.message.name))
+      out:write(("<p>Estimated total count: %s</p>\n")
+         :format(comma_value(round(self:estimated_total_count(event)))))
       if event.lag then
-         out:write(("<div id='%s'></div>\n"):format(event.message.name))
-         out:write("<script>\n")
-         out:write("var x = [\n")
-         for count, lo, hi in event.lag.histogram:iterate() do
-            out:write(("%f,"):format(lo))
-         end
-         out:write("\n]\n")
-         out:write("var y = [\n")
-         for count, lo, hi in event.lag.histogram:iterate() do
-            out:write(("%f,"):format(tonumber(count)/event.count))
-         end
-         out:write("\n]\n")
-         out:write (([[
-            var data = { x: x, y: y, type: 'scatter' }
-            var layout = {
-               xaxis: {
-                  type: 'log',
-                  autorange: true
-               },
-               yaxis: {
-                  //type: 'log',
-                  autorange: true
-               }
-            }
-            Plotly.newPlot('%s', [data], layout);
-            </script> 
-         ]]):format(event.message.name))
+         out:write(("<p>Estimated total lag: %s tsc</p>\n")
+            :format(comma_value(round(self:estimated_total_lag(event)))))
+         self:html_histogram(out, event.lag.histogram, {
+            id=event.message.name.."-lag",
+            min=event.lag.min/2, max=event.lag.max*2,
+            unit='tsc'
+         })
       end
    end
 end
 
-local tl = Timeline:new("/var/run/snabb/1217680/events.timeline")
+local tl = Timeline:new("/var/run/snabb/4045267/events.timeline")
 tl:html_dump()
