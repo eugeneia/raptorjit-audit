@@ -3,6 +3,7 @@
 local audit = require("audit")
 local vmprofile = require("audit.vmprofile")
 local IR = require("audit.ir")
+local timeline = require("audit.timeline")
 
 local function dbg (msg, ...) io.stderr:write(msg:format(...).."\n") end
 
@@ -80,6 +81,12 @@ function Birdwatch:new (arg)
          dbg("Failed to add profile %s: %s", profile, err)
       end
    end
+   local ok, ret = pcall(function () return timeline:new(arg.timeline) end)
+   if ok then
+      self.timeline = ret
+   else
+      dbg("Can not open timeline %s: %s", arg.timeline, ret)
+   end
    return self
 end
 
@@ -89,6 +96,9 @@ function Birdwatch:html_report (out)
    self:html_report_profile_snapshots(out)
    self:html_report_traces(out)
    self:html_report_events(out)
+   if self.timeline then
+      self.timeline:html_report_timeline(out)
+   end
    self:html_report_script(out)
 end
 
@@ -769,6 +779,7 @@ function Birdwatch.system_report (path, shmpath, snappath, out)
          name = name,
          auditlog = auditlog,
          profiles = profiles,
+         timeline = dir.."/events.timeline",
          info = procinfo(name)
       }
    end
