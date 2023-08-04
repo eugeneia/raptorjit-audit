@@ -44,6 +44,11 @@ function Birdwatch:html_report_process (process, out)
    bird:html_report(out)
 end
 
+function Birdwatch:csv_report_timeline (process, out)
+   local bird = self:new(process)
+   bird.timeline:toCSV(out)
+end
+
 function Birdwatch:html_report_trace_full (process, traceno, out)
    self:html_report_encoding(out)
    self:html_report_style(out)
@@ -97,7 +102,7 @@ function Birdwatch:html_report (out)
    self:html_report_traces(out)
    self:html_report_events(out)
    if self.timeline then
-      self.timeline:html_report_timeline(out)
+      self:html_report_timeline(out)
    end
    self:html_report_script(out)
 end
@@ -595,6 +600,161 @@ function Birdwatch:html_report_instructions (instructions, out, traceno)
    out:write("</div>\n")
 end
 
+function Birdwatch:html_histogram (out, lag, xlabel, id)
+   out:write(("<div id='%s'></div>\n"):format(id))
+   out:write("<script>\n")
+   out:write("var x = [\n")
+   for count, lo, hi in lag.histogram:iterate() do
+      if count > 0 then
+         out:write(("%d,"):format(math.ceil(lo)))
+      end
+   end
+   out:write("\n]\n")
+   out:write("var y = [\n")
+   for count, lo, hi in lag.histogram:iterate() do
+      if count > 0 then
+         local density = tonumber(count) / tonumber(lag.histogram.total)
+         out:write(("%f,"):format(density))
+      end
+   end
+   out:write("\n]\n")
+   out:write (([[
+      var data = { x: x, y: y, type: 'bar' }
+      var layout = {
+         xaxis: {
+            title: { text: %q },
+            type: 'log',
+            autorange: false,
+            range: [%f, %f]
+         },
+         yaxis: {
+            title: { text: 'density' },
+            autorange: true,
+            fixedrange: true
+         },
+         height: 300, width: 800
+      }
+      Plotly.newPlot('%s', [data], layout);
+      </script> 
+   ]]):format(
+      xlabel,
+      math.log10(lag.min),
+      math.log10(lag.max),
+      id
+   ))
+end
+
+function Birdwatch:html_boxplot (out, events, xlabel, id)
+   out:write(("<div id='%s'></div>\n"):format(id))
+   out:write("<script>\n")
+   out:write("var data = [\n")
+   for _, event in ipairs(events) do
+      if event.lag then
+         out:write(("{y0:%q, q1:[%f], median:[%f], q3:[%f], type:'box', orientation:'h', hoverinfo:'x'},\n")
+            :format(
+               event.message.name,
+               event.lag.q1, event.lag.q2, event.lag.q3
+            ))
+      end
+   end
+   out:write("]\n")
+   out:write(([[Plotly.newPlot(%q, data, {
+         showlegend: false,
+         margin: {l:200},
+         height: 600, width: 800,
+         xaxis: {title: {text: %q}},
+         yaxis: {fixedrange:true}
+      })]]):format(id, xlabel))
+   out:write("\n</script>\n")
+end
+
+function Birdwatch:html_report_timeline (out)
+   out = out or io.stdout
+   local tl = self.timeline
+   out:write("<details>\n")
+   out:write("<summary>Timeline</summary>\n")
+   out:write("<script src='https://cdn.plot.ly/plotly-2.14.0.min.js'></script>\n")
+   out:write("<details open>\n")
+   out:write("<summary>Landmarks</summary>\n")
+   out:write("<table>\n")
+   out:write("<tbody>\n")
+   out:write("<tr>\n")
+   out:write("<td><b>tsc</b> frequency is</td>\n")
+   out:write(("<td class=right>%.2f Ghz</td>\n"):format(tl.tsc_freq/1e9))
+   out:write("</tr>\n")
+   out:write("<tr>\n")
+   out:write("<td>One <b>tsc</b> tick is</td>\n")
+   out:write(("<td class=right>%.2f ns</td>\n"):format(tl.tsc_ns))
+   out:write("</tr>\n")
+   out:write("<tr>\n")
+   out:write("<td>Events span a period of</td>\n")
+   out:write(("<td class=right>%.2f s</td>\n"):format(tl.event_period))
+   out:write("</tr>\n")
+   out:write("</tbody>\n")
+   out:write("</table>\n")
+   out:write("</details>\n")
+
+   out:write("<details>\n")
+   out:write("<summary>Engine summary</summary>\n")
+   local engine_events = tl:select_events(tl.events, {
+      '^engine%.got_monotonic_time',
+      '^engine%.breath_pulled',
+      '^engine%.breath_pushed',
+      '^engine%.breath_ticked',
+      '^engine%.commited_counters',
+      '^engine%.polled_timers',
+      '^engine%.wakeup_from_sleep'
+   })
+   table.sort(engine_events, tl.sort_events_by_median_lag())
+   self:html_boxplot(out, engine_events, 'tsc', 'engine_summary')
+   out:write("<details>\n")
+   out:write("<summary>Sleep</summary>\n")
+   self:html_histogram(out, tl.sleep, 'usec', 'sleep_usec')
+   out:write("</details>\n")
+   out:write("</details>\n")
+
+   out:write("<details>\n")
+   out:write("<summary>App summary</summary>\n")
+   local app_events = tl:select_events(tl.events, {
+      '^app%.pulled',
+      '^app%.pushed',
+      '^app%.ticked'
+   })
+   table.sort(app_events, tl:sort_events_by_median_lag())
+   self:html_boxplot(out, app_events, 'tsc', 'app_summary')
+   out:write("</details>\n")
+
+   out:write("<details>\n")
+   out:write("<summary>Event lag</summary>\n")
+   local all_events = tl:select_events(tl.events)
+   table.sort(all_events, tl:sort_events_by_name())
+   out:write("<div class=scroll>\n")
+   out:write("<table>\n")
+   out:write("<tbody>\n")
+   for _, event in ipairs(all_events) do
+      out:write("<tr><td>\n")
+      out:write("<details>\n")
+      out:write(("<summary>%s</summary>\n"):format(event.message.name))
+      local etcount = tl:estimated_total_count(event)
+      out:write(("<p>Estimated total count: %s (%s per second)</p>\n")
+         :format(comma_value(round(etcount)), comma_value(round(etcount/tl.event_period))))
+      if event.lag then
+         local etlag = tl:estimated_total_lag(event)
+         out:write(("<p>Estimated total lag: %s tsc (%d%%)</p>\n")
+            :format(comma_value(round(etlag)), math.floor(100*etlag/(tl.event_period*tl.tsc_freq))))
+         self:html_histogram(out, event.lag, 'tsc', 'event_'..event.message.name)
+      end
+      out:write("</details>\n")
+      out:write("</td></tr>\n")
+   end
+   out:write("</tbody>\n")
+   out:write("</table>\n")
+   out:write("</div>\n")
+   out:write("</details>\n")
+   out:write(("<p><a href='/%s/timeline/events.csv'>CSV</a></p>\n"):format(self.name))
+   out:write("</details>\n")
+end
+
 function Birdwatch:html_report_style (out)
    out:write([[<style>
       //body { display: flex; align-items: flex-start; }
@@ -799,6 +959,10 @@ function Birdwatch.system_report (path, shmpath, snappath, out)
       local process = assert(processes[name])
       local event = assert(tonumber(event))
       Birdwatch:html_report_event_full(process, event, out)
+   elseif path:match("^/%d+/timeline/events.csv$") then
+      local name = path:match("^/(%d+)/timeline/events.csv$")
+      local process = assert(processes[name])
+      Birdwatch:csv_report_timeline(process, out)
    end
 end
 
