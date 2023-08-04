@@ -132,8 +132,10 @@ function Timeline:new (path)
    self.log = self:read_log(self.timeline + 64)
    self:compute_lag(self.log)
    self.tsc_freq = self:compute_tsc_freq(self.log)
+   self.event_period = self:compute_event_period(self.log)
    self.tsc_ns = 1e9 / self.tsc_freq
    self.events = self:summarize_events(self.log)
+   self.sleep = self:summarize_sleep(self.log)
    return self
 end
 
@@ -233,6 +235,25 @@ function Timeline:compute_tsc_freq (log)
    end
 end
 
+function Timeline:compute_event_period (log)
+   local period = 0
+   local start, stop
+   for _, entry in ipairs(log) do
+      if entry.message.name == 'engine.got_monotonic_time' then
+         if not start then
+            start = entry
+         else
+            stop = entry
+            if start.tsc < stop.tsc then
+               period = period + tonumber(stop.args.unixnanos - start.args.unixnanos)/1e9
+            end
+            start, stop = stop, nil
+         end
+      end
+   end
+   return period
+end
+
 function Timeline:summarize_events (log)
    local events = {}
    for _, entry in ipairs(log) do
@@ -276,6 +297,21 @@ function Timeline:summarize_events (log)
       end
    end
    return events
+end
+
+function Timeline:summarize_sleep (log)
+   local sleep = {
+      min = 1, max = 1000,
+      histogram = new_histogram(0.1, 1000)
+   }
+   for _, entry in ipairs(log) do
+      if entry.message.name == 'engine.sleep_on_idle' or 
+         entry.message.name == 'engine.sleep_Hz'
+      then
+         sleep.histogram:add(entry.args.usec)
+      end
+   end
+   return sleep
 end
 
 function Timeline:select_events (events, patterns)
@@ -422,6 +458,10 @@ function Timeline:html_report_timeline (out)
    out:write("<td>One <b>tsc</b> tick is</td>\n")
    out:write(("<td class=right>%.2f ns</td>\n"):format(self.tsc_ns))
    out:write("</tr>\n")
+   out:write("<tr>\n")
+   out:write("<td>Events span a period of</td>\n")
+   out:write(("<td class=right>%.2f s</td>\n"):format(self.event_period))
+   out:write("</tr>\n")
    out:write("</tbody>\n")
    out:write("</table>\n")
    out:write("</details>\n")
@@ -439,6 +479,10 @@ function Timeline:html_report_timeline (out)
    })
    table.sort(engine_events, self.sort_events_by_median_lag())
    self:html_boxplot(out, engine_events, 'tsc', 'engine_summary')
+   out:write("<details>\n")
+   out:write("<summary>Sleep</summary>\n")
+   self:html_histogram(out, self.sleep, 'usec', 'sleep_usec')
+   out:write("</details>\n")
    out:write("</details>\n")
 
    out:write("<details>\n")
@@ -463,11 +507,13 @@ function Timeline:html_report_timeline (out)
       out:write("<tr><td>\n")
       out:write("<details>\n")
       out:write(("<summary>%s</summary>\n"):format(event.message.name))
-      out:write(("<p>Estimated total count: %s</p>\n")
-         :format(comma_value(round(self:estimated_total_count(event)))))
+      local etcount = self:estimated_total_count(event)
+      out:write(("<p>Estimated total count: %s (%s per second)</p>\n")
+         :format(comma_value(round(etcount)), comma_value(round(etcount/self.event_period))))
       if event.lag then
-         out:write(("<p>Estimated total lag: %s tsc</p>\n")
-            :format(comma_value(round(self:estimated_total_lag(event)))))
+         local etlag = self:estimated_total_lag(event)
+         out:write(("<p>Estimated total lag: %s tsc (%d%%)</p>\n")
+            :format(comma_value(round(etlag)), math.floor(100*etlag/(self.event_period*self.tsc_freq))))
          self:html_histogram(out, event.lag, 'tsc', 'event_'..event.message.name)
       end
       out:write("</details>\n")
