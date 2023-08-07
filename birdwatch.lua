@@ -909,14 +909,19 @@ function Birdwatch.socket_activate (shmpath, snappath)
    local request = io.stdin:read("*l")
    local path = request:match("^GET ([^ ]+) HTTP/1.1")
    assert(path, "Not a GET request")
-   io.stdout:write("HTTP/1.1 200 OK\r\n")
-   io.stdout:write("Content-Type: text/html\r\n")
-   io.stdout:write("\r\n")
-   Birdwatch.system_report(path, shmpath, snappath, io.stdout)
+   Birdwatch.system_report(path, shmpath, snappath, io.stdout, Birdwatch.http_respond)
 end
 
-function Birdwatch.system_report (path, shmpath, snappath, out)
+function Birdwatch.http_respond (out, opt)
+   opt = opt or {}
+   out:write(("HTTP/1.1 %s\r\n"):format(opt.status or "200 OK"))
+   out:write(("Content-Type: %s\r\n"):format(opt.type or "text/html"))
+   out:write("\r\n")
+end
+
+function Birdwatch.system_report (path, shmpath, snappath, out, respond)
    out = out or io.stdout
+   respond = respond or function () end
    local processes = {}
    local find_auditlog =
       ("find '%s' -name 'audit.log' 2>/dev/null"):format(shmpath)
@@ -944,22 +949,27 @@ function Birdwatch.system_report (path, shmpath, snappath, out)
       }
    end
    if path == "/" then
+      respond(out)
       Birdwatch:html_report_processes(processes, out)
    elseif path:match("^/%d+$") then
+      respond(out)
       local name = path:match("^/(%d+)$")
       local process = assert(processes[name])
       Birdwatch:html_report_process(process, out)
    elseif path:match("^/%d+/trace/%d+$") then
+      respond(out)
       local name, trace = path:match("^/(%d+)/trace/(%d+)$")
       local process = assert(processes[name])
       local traceno = assert(tonumber(trace))
       Birdwatch:html_report_trace_full(process, traceno, out)
    elseif path:match("^/%d+/event/%d+$") then
+      respond(out)
       local name, event = path:match("^/(%d+)/event/(%d+)$")
       local process = assert(processes[name])
       local event = assert(tonumber(event))
       Birdwatch:html_report_event_full(process, event, out)
    elseif path:match("^/%d+/timeline/events.csv$") then
+      respond(out, {type="text/csv"})
       local name = path:match("^/(%d+)/timeline/events.csv$")
       local process = assert(processes[name])
       Birdwatch:csv_report_timeline(process, out)
